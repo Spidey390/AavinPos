@@ -150,6 +150,13 @@ test('backup validation preserves orders with and without recorded tax', () => {
   assert.deepEqual(validateBackup(backup).orders, [order, oldOrder]);
 });
 
+test('restore rejects negative menu prices and negative invoice amounts', () => {
+  const backup = { ...Object.fromEntries(stores.map(name => [name, []])), database: 'BrewBitePOS_DB_v2', version: 1, settings: {} };
+  assert.throws(() => validateBackup({ ...backup, products: [{ id: 'p1', name: 'Milk', price: -25 }] }), /invalid.*products/);
+  assert.throws(() => validateBackup({ ...backup, orders: [{ id: 'o1', invoiceNo: 'AP-1', channel: 'Counter',
+    customerName: 'Walk-in', createdAt: new Date().toISOString(), subtotal: 25, total: -25, items: [] }] }), /invalid.*orders/);
+});
+
 test('form input sanitization cleans control characters and enforces length bounds', () => {
   assert.equal(sanitizeText('  Cafe \u0000Latte\u202E  ', 20), 'Cafe Latte');
   assert.equal(sanitizeText('A very long product name that exceeds limit', 10), 'A very lon');

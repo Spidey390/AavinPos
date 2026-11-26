@@ -7,23 +7,24 @@ export const stores = [
 
 const isRecord = value => value && typeof value === 'object' && !Array.isArray(value);
 const isMoney = value => typeof value === 'number' && Number.isFinite(value);
+const isPrice = value => isMoney(value) && value >= 0;
 const isText = value => typeof value === 'string';
-const validLine = item => isRecord(item) && isText(item.name) && isMoney(item.price) &&
-  Number.isInteger(item.quantity) && item.quantity > 0 && (!item.addons || Array.isArray(item.addons));
+const validLine = item => isRecord(item) && isText(item.name) && isPrice(item.price) &&
+  Number.isSafeInteger(item.quantity) && item.quantity > 0 && (!item.addons || Array.isArray(item.addons));
 
 const checkRow = {
-  products: row => isText(row.name) && isMoney(row.price) && (!row.sizes ||
-    (Array.isArray(row.sizes) && row.sizes.every(size => isRecord(size) && isText(size.name) && isMoney(size.price)))) &&
+  products: row => isText(row.name) && isPrice(row.price) && (!row.sizes ||
+    (Array.isArray(row.sizes) && row.sizes.every(size => isRecord(size) && isText(size.name) && isPrice(size.price)))) &&
     (!row.addons || (Array.isArray(row.addons) && row.addons.every(addon =>
-      isRecord(addon) && isText(addon.name) && isMoney(addon.price)))),
+      isRecord(addon) && isText(addon.name) && isPrice(addon.price)))),
   customers: row => isText(row.name) && isText(row.phone) && isMoney(row.totalSpent),
   orders: row => isText(row.invoiceNo) && isText(row.channel) && isText(row.customerName) &&
-    !Number.isNaN(Date.parse(row.createdAt)) && isMoney(row.total) &&
-    [row.subtotal, row.cgst ?? 0, row.sgst ?? 0].every(isMoney) &&
-    Array.isArray(row.items) && row.items.every(item => validLine(item) && isMoney(item.total)),
+    !Number.isNaN(Date.parse(row.createdAt)) && isPrice(row.total) &&
+    [row.subtotal, row.cgst ?? 0, row.sgst ?? 0].every(isPrice) &&
+    Array.isArray(row.items) && row.items.every(item => validLine(item) && isPrice(item.total)),
   tables: row => isText(row.name) && (!row.activeOrder ||
     (isRecord(row.activeOrder) && Array.isArray(row.activeOrder.items) && row.activeOrder.items.every(validLine))),
-  expenses: row => isMoney(row.amount),
+  expenses: row => isPrice(row.amount),
   suppliers: row => isText(row.name) && isMoney(row.totalSpend) && isMoney(row.balance),
   purchases: row => isText(row.invoiceNo) && isText(row.supplierId) && [row.totalAmount, row.subtotal, row.tax].every(isMoney),
   staff: row => isText(row.name) && isText(row.role) && isText(row.status) && (row.pin === undefined || isText(row.pin)),

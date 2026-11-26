@@ -28,8 +28,8 @@ export default function StaffPermissions() {
     const name = sanitizeText(data.get('name'), 80);
     const email = sanitizeText(data.get('email'), 120);
     const password = data.get('password') || '';
-    if (!name || !email || password.length < 8) {
-      showToast('Enter a name, email, and password of at least 8 characters.', 'error');
+    if (!name || !email || password.length < 8 || password.length > 128) {
+      showToast('Enter a name, email, and password of 8 to 128 characters.', 'error');
       return;
     }
     creating.current = true;
@@ -110,7 +110,7 @@ export default function StaffPermissions() {
             className="mt-1 w-full rounded-lg border border-slate-600 bg-[#121620] p-2" />
         </label>
         <label className="block text-sm">Staff password
-          <input name="password" type="password" autoComplete="new-password" minLength={8} required
+          <input name="password" type="password" autoComplete="new-password" minLength={8} maxLength={128} required
             className="mt-1 w-full rounded-lg border border-slate-600 bg-[#121620] p-2" />
         </label>
         <button type="submit" disabled={saving} className="rounded-lg bg-orange-700 px-3 py-2 text-sm font-bold disabled:opacity-60">

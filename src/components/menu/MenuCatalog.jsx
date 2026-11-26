@@ -11,6 +11,7 @@ import { addonKey, addonNameKey, mergeSavedAddons } from '../../domain/addons';
 import { categoryKey } from '../../domain/categories';
 import { MAX_MENU_CSV_SIZE, parseMenuCsv } from '../../domain/csv';
 import { matchesProductSearch } from '../../domain/products';
+import { isMoney } from '../../domain/billing';
 
 const dietaryOptions = [
   { label: 'Pure Veg', Icon: Circle, color: 'text-emerald-400' },
@@ -222,14 +223,14 @@ export default function MenuCatalog() {
     const costPrice = Number(formCostPrice);
     const sizes = hasSizes ? formSizes.map(size => ({ name: size.name.trim(), price: Number(size.price) })) : [];
     const options = hasAddons ? formAddons.map(addon => ({ ...addon, name: addon.name.trim(), price: Number(addon.price) })) : [];
-    const validOptions = rows => rows.every(row => row.name && Number.isFinite(row.price) && row.price >= 0) &&
+    const validOptions = rows => rows.every(row => row.name && isMoney(row.price)) &&
       new Set(rows.map(row => row.name.toLowerCase())).size === rows.length;
     const cleanName = sanitizeText(formName, 100);
     const cleanCategory = sanitizeText(isNewCategory || !categories.length ? newCategoryName : formCategory, 50);
-    if (!cleanName || !cleanCategory || !formSellingPrice || !Number.isFinite(price) || price < 0 ||
-        !Number.isFinite(costPrice) || costPrice < 0 || !validOptions(sizes) || !validOptions(options) ||
+    if (!cleanName || !cleanCategory || !formSellingPrice || !isMoney(price) ||
+        !isMoney(costPrice) || !validOptions(sizes) || !validOptions(options) ||
         (hasSizes && !sizes.length)) {
-      showToast('Enter valid product details, a category, prices, and options.', 'error');
+      showToast('Enter valid product details and prices with up to two decimal places.', 'error');
       return;
     }
 

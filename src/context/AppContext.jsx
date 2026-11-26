@@ -1,9 +1,9 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { onSnapshot } from 'firebase/firestore';
 import confetti from 'canvas-confetti';
-import { initialSettings, initialCategories } from '../data/initialData';
+import { initialSettings } from '../data/initialData';
 import { playSound } from '../utils/audio';
-import { calculateBill, roundMoney, validateTender } from '../domain/billing';
+import { calculateBill, isMoney, roundMoney, validateTender } from '../domain/billing';
 import { normalizePhone } from '../domain/customers';
 import { categoryKey, mergeSavedCategories, removeSavedCategory } from '../domain/categories';
 import { addonNameKey, mergeSavedAddons, removeSavedAddon } from '../domain/addons';
@@ -526,8 +526,8 @@ export function AppProvider({ children, operator, signOut }) {
       saveSavedAddon: addon => commit(async () => {
         const cleanName = sanitizeText(addon?.name, 50);
         const price = Number(addon?.price);
-        if (!cleanName || !Number.isFinite(price) || price < 0) {
-          throw new Error('Enter a valid name and price for the add-on.');
+        if (!cleanName || !isMoney(price)) {
+          throw new Error('Enter a valid add-on name and a price with up to two decimal places.');
         }
         const next = mergeSavedAddons(settings.commonAddons, [{ name: cleanName, price }]);
         await updateSettings(workspace, { commonAddons: next });

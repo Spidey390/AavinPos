@@ -231,6 +231,9 @@ export function updateSettings(workspace, changes) {
 }
 
 export function createExpense(workspace, expense) {
+  if (!isMoney(expense.amount) || expense.amount <= 0) {
+    throw new Error('Enter a positive expense amount with up to two decimal places.');
+  }
   return runTransaction(firestore, async transaction => {
     transaction.set(row(workspace, 'expenses', expense.id), expense);
   });
