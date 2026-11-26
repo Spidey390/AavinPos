@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { calculateBill, validateTender } from '../src/domain/billing.js';
+import { calculateBill, validateTender, validateCheckoutOrder } from '../src/domain/billing.js';
 import { businessDate, dateRange, inRange } from '../src/domain/dates.js';
 import { normalizePhone, canBillToAccount, formatAccountStatement } from '../src/domain/customers.js';
 import { canOpen, homeView } from '../src/domain/access.js';
@@ -47,6 +47,18 @@ test('only finite exact cash and split tenders can settle a bill', () => {
   assert.notEqual(validateTender('Split', 147, 147, { cash: 999, upi: 0 }), '');
   assert.notEqual(validateTender('Split', 147, 147, { cash: -1, upi: 148 }), '');
   assert.equal(validateTender('Split', 147.01, 147.01, { cash: 100.05, upi: 46.96 }), '');
+});
+
+test('checkout rejects tampered totals, invalid lines and discounts disabled after drafting', () => {
+  const bill = { items: [{ name: 'Milk', price: 25, quantity: 2 }], subtotal: 50, discount: 0, total: 50,
+    discountPercent: 0, fixedDiscount: 0, paymentMethod: 'Cash', amountReceived: 50 };
+  assert.equal(validateCheckoutOrder(bill, {}), '');
+  for (const changes of [{ subtotal: 1 }, { total: 1 }, { amountReceived: Infinity },
+    { items: [{ name: 'Milk', price: -25, quantity: 2 }] },
+    { items: [{ name: 'Milk', price: 25, quantity: 0.5 }] },
+    { discountPercent: 10, discount: 5, total: 45 }]) {
+    assert.notEqual(validateCheckoutOrder({ ...bill, ...changes }, {}), '');
+  }
 });
 
 test('orders roll over at India midnight and the week starts on Monday', () => {

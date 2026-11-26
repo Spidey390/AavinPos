@@ -4,6 +4,7 @@ import { X, IndianRupee, QrCode, CreditCard, GitFork, CheckCircle2, TriangleAler
 import { useApp } from '../../context/AppContext';
 import { roundMoney, validateTender } from '../../domain/billing';
 import { isUpiQrImage } from '../../domain/upi';
+import { canBillToAccount } from '../../domain/customers';
 import Dialog from '../layout/Dialog';
 
 const methods = [
@@ -31,8 +32,9 @@ export default function PaymentModal() {
   const splitUpi = roundMoney(cartTotal - cashPart);
   const splitBreakdown = paymentMode === 'Split' ? { cash: cashPart, upi: splitUpi } : null;
   const needsConfirmation = paymentMode !== 'Cash';
-  const tenderError = paymentMode === 'Account' && !selectedCustomer
-    ? 'Select a customer account to bill on credit.'
+  const credit = canBillToAccount(selectedCustomer, cartTotal);
+  const tenderError = paymentMode === 'Account' && !credit.allowed
+    ? credit.reason
     : validateTender(paymentMode, cartTotal, paymentMode === 'Cash' ? cash : cartTotal, splitBreakdown);
   const billChanged = paymentRevision !== initialRevision.current;
   const qrAmount = !billChanged && !tenderError

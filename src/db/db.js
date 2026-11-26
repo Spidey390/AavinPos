@@ -5,7 +5,9 @@ import {
 import { firestore } from '../services/firebase';
 import { brandingRef } from '../services/branding';
 import { newId } from '../domain/ids';
-import { normalizePhone } from '../domain/customers';
+import { canBillToAccount, normalizePhone } from '../domain/customers';
+import { isMoney, validateCheckoutOrder } from '../domain/billing';
+import { sanitizeText } from '../domain/sanitize';
 import { mergeSavedAddons } from '../domain/addons';
 import { mergeSavedCategories } from '../domain/categories';
 import { stores, validateBackup } from './backup';
@@ -282,7 +284,14 @@ export function saveUniqueRecord(workspace, name, record) {
     }
 
     const defaults = name === 'customers' ? { ordersCount: 0, totalSpent: 0, avgOrderValue: 0, dueBalance: 0, creditLimit: 0, accountTransactions: [] } : {};
-    transaction.set(ref, { ...defaults, ...old, ...record });
+    // Profile edits must not replay stale financial balances over a live sale.
+    const fields = { ...record };
+    if (name === 'customers' && old) {
+      for (const field of ['ordersCount', 'totalSpent', 'avgOrderValue', 'dueBalance', 'accountTransactions', 'lastPaymentAt', 'lastPaymentAmount']) {
+        fields[field] = old[field] ?? defaults[field];
+      }
+    }
+    transaction.set(ref, { ...defaults, ...old, ...fields });
     added.forEach(key => transaction.set(key, { id: record.id }));
     removed.forEach((key, index) => {
       if (checks[added.length + index].data()?.id === record.id) transaction.delete(key);
@@ -368,6 +377,15 @@ export async function executeOrderTransaction(workspace, { order, tableRevision,
     if (active?.workspace !== workspace || !settings) {
       throw new Error('The active workspace changed. Review the bill before settling.');
     }
+    const invalidOrder = validateCheckoutOrder(order, settings);
+    if (invalidOrder) throw new Error(invalidOrder);
+    if (customerRef && (!customer || customer.phone !== order.customerPhone)) {
+      throw new Error('The customer account changed. Select the customer again before settling.');
+    }
+    if (order.paymentMethod === 'Account' || order.paymentMethod === 'Credit') {
+      const credit = canBillToAccount(customer, order.total);
+      if (!credit.allowed) throw new Error(credit.reason);
+    }
     if (tableRef && (!table?.activeOrder || draftRevision(table.activeOrder) !== tableRevision)) {
       throw new Error('The table order changed. Review the current bill before completing payment.');
     }
@@ -438,16 +456,15 @@ export async function executeOrderTransaction(workspace, { order, tableRevision,
 }
 
 export function recordCustomerAccountPayment(workspace, customerId, { amount, method = 'Cash', referenceNo = '', notes = '' }) {
+  const payAmount = Number(amount);
+  if (!isMoney(payAmount) || payAmount <= 0) throw new Error('Enter a positive payment amount with up to two decimal places.');
+  if (!['Cash', 'UPI', 'Card'].includes(method)) throw new Error('Choose Cash, UPI, or Card for the account payment.');
   const customerRef = row(workspace, 'customers', customerId);
   return runTransaction(firestore, async transaction => {
     const customer = (await transaction.get(customerRef)).data();
     if (!customer) throw new Error('Customer not found.');
 
-    const payAmount = Number(Number(amount).toFixed(2));
-    if (!Number.isFinite(payAmount) || payAmount <= 0) {
-      throw new Error('Enter a valid positive payment amount.');
-    }
-
+    const recordedAt = new Date().toISOString();
     const currentDue = Number(customer.dueBalance) || 0;
     const newDue = Number((currentDue - payAmount).toFixed(2));
     const prevTransactions = Array.isArray(customer.accountTransactions) ? customer.accountTransactions : [];
@@ -455,12 +472,12 @@ export function recordCustomerAccountPayment(workspace, customerId, { amount, me
       ...prevTransactions.slice(-49),
       {
         id: 'tx-' + Date.now(),
-        date: new Date().toISOString(),
+        date: recordedAt,
         type: 'payment',
         amount: payAmount,
         method,
-        referenceNo: referenceNo.trim(),
-        notes: notes.trim(),
+        referenceNo: sanitizeText(referenceNo, 120),
+        notes: sanitizeText(notes, 500),
         balanceAfter: newDue
       }
     ];
@@ -468,7 +485,7 @@ export function recordCustomerAccountPayment(workspace, customerId, { amount, me
     transaction.update(customerRef, {
       dueBalance: newDue,
       accountTransactions: newTransactions,
-      lastPaymentAt: new Date().toISOString(),
+      lastPaymentAt: recordedAt,
       lastPaymentAmount: payAmount
     });
     return { dueBalance: newDue, amount: payAmount };

@@ -414,7 +414,7 @@ export function AppProvider({ children, operator, signOut }) {
           ...bill,
           merchant: { brandName, streetAddress, city, state, pincode, phone, receiptFooterMessage,
             termsAndConditions, license },
-          paymentMethod, splitBreakdown, amountReceived, referenceNo,
+          paymentMethod, splitBreakdown, amountReceived, referenceNo: sanitizeText(referenceNo, 120),
           status: 'Completed', cashierName: operator.name || operator.email, cashierUid: operator.uid
         },
         tableRevision: draftRevision(draft),
