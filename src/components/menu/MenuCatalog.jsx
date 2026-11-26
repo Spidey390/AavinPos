@@ -606,12 +606,10 @@ export default function MenuCatalog() {
 
       {showCsvModal && (
         <Dialog
-          isOpen={showCsvModal}
+          label="Import Menu from CSV"
           onClose={() => { if (!isImporting) setShowCsvModal(false); }}
-          title="Import Menu from CSV"
-          maxWidth="max-w-xl"
         >
-          <div className="space-y-4">
+          <div className="max-h-[90dvh] w-full max-w-xl space-y-4 overflow-auto rounded-xl border border-slate-700 bg-[#171c26] p-4">
             <div className="rounded-xl border border-slate-700/60 bg-[#121620] p-3 text-xs text-slate-300 space-y-1">
               <p className="font-semibold text-white">Expected CSV format:</p>
               <code className="block rounded bg-[#0d1117] p-2 font-mono text-[11px] text-emerald-400">
@@ -687,12 +685,10 @@ export default function MenuCatalog() {
 
       {showManageLibrary && (
         <Dialog
-          isOpen={showManageLibrary}
+          label="Manage Categories & Add-ons"
           onClose={() => setShowManageLibrary(false)}
-          title="Manage Categories & Add-ons"
-          maxWidth="max-w-xl"
         >
-          <div className="space-y-4">
+          <div className="max-h-[90dvh] w-full max-w-xl space-y-4 overflow-auto rounded-xl border border-slate-700 bg-[#171c26] p-4">
             {/* Tabs */}
             <div className="flex border-b border-[#263143]">
               <button

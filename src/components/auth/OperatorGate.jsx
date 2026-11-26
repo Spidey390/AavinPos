@@ -1,10 +1,9 @@
 import React, { lazy, Suspense, useEffect, useState, useRef } from 'react';
-import { onAuthStateChanged, signInWithEmailAndPassword, signOut, connectAuthEmulator, getAuth } from 'firebase/auth';
-import { app, useEmulators } from '../../services/firebaseApp';
+import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
+import { auth } from '../../services/auth';
+import { clearCounterDrafts } from '../../domain/drafts';
 import { sanitizeText } from '../../domain/sanitize';
 
-const auth = getAuth(app);
-if (useEmulators) connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
 const defaultTitle = 'Aavin POS';
 const BrandTitle = React.createContext(defaultTitle);
 const Workspace = lazy(() => import('./OperatorWorkspace'));
@@ -113,7 +112,11 @@ function SignIn() {
   if (user) {
     return (
       <Suspense fallback={loading}>
-        <Workspace key={user.uid} user={user} onSignOut={() => signOut(auth)} />
+        <Workspace key={user.uid} user={user} onSignOut={async () => {
+          const uid = user.uid;
+          await signOut(auth);
+          try { clearCounterDrafts(sessionStorage, uid); } catch { /* Storage may be disabled. */ }
+        }} />
       </Suspense>
     );
   }

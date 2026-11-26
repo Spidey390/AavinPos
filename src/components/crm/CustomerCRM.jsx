@@ -9,6 +9,7 @@ import Dialog from '../layout/Dialog';
 import { newId } from '../../domain/ids';
 import { sanitizeText, sanitizeNumber } from '../../domain/sanitize';
 import { formatAccountStatement } from '../../domain/customers';
+import { businessDate, shiftDate } from '../../domain/dates';
 
 export default function CustomerCRM() {
   const { customers, orders = [], isOwner, saveCustomer, deleteCustomer, recordCustomerPayment, showToast } = useApp();
@@ -65,7 +66,8 @@ export default function CustomerCRM() {
       if (!items.length) continue;
 
       const dateObj = tx.date ? new Date(tx.date) : new Date();
-      const dateKey = dateObj.toISOString().slice(0, 10);
+      const dateKey = businessDate(dateObj);
+      if (!dateKey) continue;
 
       if (!dateMap.has(dateKey)) {
         dateMap.set(dateKey, {
@@ -93,6 +95,7 @@ export default function CustomerCRM() {
 
     // 2. Also check customer orders from the orders store
     const customerOrders = orders.filter(o => 
+      o.customerPhone === statementCustomer.phone ||
       (o.customer?.id && o.customer.id === statementCustomer.id) ||
       (o.customer?.phone && o.customer.phone === statementCustomer.phone)
     );
@@ -105,7 +108,8 @@ export default function CustomerCRM() {
       if (alreadyIncluded || !Array.isArray(ord.items) || ord.items.length === 0) continue;
 
       const dateObj = ord.createdAt ? new Date(ord.createdAt) : new Date();
-      const dateKey = dateObj.toISOString().slice(0, 10);
+      const dateKey = businessDate(dateObj);
+      if (!dateKey) continue;
 
       if (!dateMap.has(dateKey)) {
         dateMap.set(dateKey, {
@@ -148,10 +152,10 @@ export default function CustomerCRM() {
       const [y, m, d] = dateKey.split('-').map(Number);
       const date = new Date(y, m - 1, d);
       const today = new Date();
-      const todayKey = today.toISOString().slice(0, 10);
+      const todayKey = businessDate(today);
       const yesterday = new Date(today);
       yesterday.setDate(yesterday.getDate() - 1);
-      const yesterdayKey = yesterday.toISOString().slice(0, 10);
+      const yesterdayKey = shiftDate(todayKey, -1);
 
       const formatted = date.toLocaleDateString('en-GB', {
         weekday: 'short', day: '2-digit', month: 'short', year: 'numeric'

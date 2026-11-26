@@ -4,6 +4,7 @@ import { firestore } from '../../services/firebase';
 import { useApp } from '../../context/AppContext';
 import { getStaffAccountUid } from '../../services/staffSignup';
 import { sanitizeText } from '../../domain/sanitize';
+import { publicError } from '../../services/errors';
 
 export default function StaffPermissions() {
   const { showToast } = useApp();
@@ -49,7 +50,7 @@ export default function StaffPermissions() {
         'auth/network-request-failed': 'Could not connect. Retry with the same email and password.',
         'permission-denied': 'Could not grant staff access. Check your owner access and retry with the same credentials.'
       }[error.code];
-      showToast(detail || error.message || 'Could not create the staff account.', 'error');
+      showToast(detail || publicError(error, 'Could not create the staff account.'), 'error');
     } finally {
       creating.current = false;
       setSaving(false);
@@ -66,7 +67,7 @@ export default function StaffPermissions() {
       });
       showToast(operator.active ? 'POS access disabled.' : 'POS access restored.');
     } catch (error) {
-      showToast(error.message || 'Could not change access.', 'error');
+      showToast(publicError(error, 'Could not change access.'), 'error');
     }
   }
 
@@ -86,7 +87,7 @@ export default function StaffPermissions() {
       });
       showToast('Staff profile deleted.');
     } catch (error) {
-      showToast(error.message || 'Could not delete the staff profile.', 'error');
+      showToast(publicError(error, 'Could not delete the staff profile.'), 'error');
     } finally {
       setDeletingUid(null);
     }

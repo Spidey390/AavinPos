@@ -28,7 +28,7 @@ const loading = <p role="status" className="app-gutters py-4 sm:py-6 text-sm tex
 
 export default function App() {
   const { activeView, activeModal, toast, isMobileMenuOpen, setIsMobileMenuOpen,
-    operator, isOwner, isDbReady, dbStatus, dbError, retryDatabase, settings } = useApp();
+    operator, isOwner, isDbReady, dbStatus, retryDatabase, settings } = useApp();
   useEffect(() => {
     const desktop = window.matchMedia('(min-width: 768px)');
     const closeDrawer = event => { if (event.matches) setIsMobileMenuOpen(false); };
@@ -70,25 +70,6 @@ export default function App() {
                 <p role="status" className="text-slate-300">Connecting to Firebase…</p>
               ) : dbStatus === 'setup-required' ? (
                 <p role="status" className="text-amber-300">The owner needs to sign in once to set up the workspace.</p>
-              ) : dbError?.code === 'permission-denied' ? (
-                <div role="alert" className="rounded-xl border border-rose-800/60 bg-rose-950/40 p-5 space-y-3">
-                  <h3 className="text-base font-semibold text-rose-300">Database Access Denied (Firestore Rules Required)</h3>
-                  <p className="text-rose-200 text-sm leading-relaxed">
-                    Cloud Firestore for project <code className="rounded bg-rose-900/60 px-1.5 py-0.5 text-xs font-mono text-white">aavin-81398</code> is rejecting access because Firestore Security Rules have not been published yet.
-                  </p>
-                  <div className="rounded-lg bg-black/40 p-3 text-xs text-slate-300 space-y-1">
-                    <p className="font-semibold text-slate-200">How to fix in 1 minute:</p>
-                    <ol className="list-decimal list-inside space-y-1 text-slate-300">
-                      <li>Open <a href="https://console.firebase.google.com/project/aavin-81398/firestore/rules" target="_blank" rel="noreferrer" className="text-orange-400 underline font-medium hover:text-orange-300">Firebase Console &gt; Firestore Database &gt; Rules</a>.</li>
-                      <li>Copy the contents of <code className="text-white">firestore.rules</code> from this project.</li>
-                      <li>Paste into the editor and click <strong>Publish</strong>.</li>
-                    </ol>
-                  </div>
-                  <button type="button" onClick={retryDatabase}
-                    className="inline-flex items-center gap-2 rounded-lg bg-orange-600 px-4 py-2 text-xs font-semibold text-white hover:bg-orange-500 shadow">
-                    Retry Connection
-                  </button>
-                </div>
               ) : (
                 <div className="space-y-3">
                   <p role="status" className="text-rose-300">The workspace is unavailable. Check your connection and access.</p>

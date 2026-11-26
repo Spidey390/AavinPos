@@ -11,6 +11,10 @@ export default function OperatorWorkspace({ user, onSignOut }) {
 
   useEffect(() => {
     let unsub = () => {};
+    const timeout = setTimeout(() => {
+      setOperator(null);
+      setError('Could not verify operator access. Check your connection and sign in again.');
+    }, 15000);
     try {
       unsub = onSnapshot(doc(firestore, 'operators', user.uid), { includeMetadataChanges: true }, snapshot => {
         // Do not authorize from a stale cached profile or an uncommitted write.
@@ -18,17 +22,20 @@ export default function OperatorWorkspace({ user, onSignOut }) {
           setOperator(undefined);
           return;
         }
+        clearTimeout(timeout);
         setError('');
         setOperator(snapshot.exists() ? snapshot.data() : null);
       }, () => {
+        clearTimeout(timeout);
         setOperator(null);
         setError('The operator profile could not be loaded. Check your connection and sign in again.');
       });
     } catch {
+      clearTimeout(timeout);
       setOperator(null);
       setError('The operator profile could not be loaded. Sign in again.');
     }
-    return unsub;
+    return () => { clearTimeout(timeout); unsub(); };
   }, [user.uid]);
 
   if (operator?.active && ['owner', 'staff'].includes(operator.role)) {

@@ -10,6 +10,8 @@ import { addonNameKey, mergeSavedAddons, removeSavedAddon } from '../domain/addo
 import { sanitizeText } from '../domain/sanitize';
 import { newId } from '../domain/ids';
 import { canOpen, homeView } from '../domain/access';
+import { parseCounterDrafts } from '../domain/drafts';
+import { publicError, reportError } from '../services/errors';
 import {
   workspaceRef, initializeWorkspace, watchConfig, watchRows, executeOrderTransaction, saveTableDraft, draftRevision,
   deleteTable, createTable, updateSettings, syncPublicBrand, createExpense, deleteRecord,
@@ -27,7 +29,7 @@ const currentView = role => {
 
 function loadCounterDrafts(key) {
   try {
-    return JSON.parse(sessionStorage.getItem(key)) || {};
+    return parseCounterDrafts(sessionStorage.getItem(key));
   } catch {
     return {};
   }
@@ -57,7 +59,7 @@ export function AppProvider({ children, operator, signOut }) {
   const settings = loadedConfig?.workspace === workspace ? loadedConfig.settings : initialSettings;
   const isDbReady = dbStatus === 'ready' && loadedConfig?.workspace === workspace;
   const onReadError = React.useCallback(error => {
-    console.error('Could not read Firebase POS data', error);
+    reportError('database-read-failed', error);
     setDbStatus('unavailable');
     setDbError(error);
   }, []);
@@ -146,7 +148,7 @@ export function AppProvider({ children, operator, signOut }) {
 
   useEffect(() => {
     if (workspace && isOwner) {
-      syncPublicBrand(workspace).catch(error => console.warn('Could not publish the cafe name', error));
+      syncPublicBrand(workspace).catch(error => reportError('branding-sync-failed', error));
     }
   }, [workspace, isOwner]);
 
@@ -186,7 +188,8 @@ export function AppProvider({ children, operator, signOut }) {
       if (message) showToast(message);
       return true;
     } catch (error) {
-      showToast(error.message || 'The change could not be saved. Try again.', 'error');
+      reportError('database-write-failed', error);
+      showToast(publicError(error), 'error');
       return false;
     }
   }
@@ -432,11 +435,11 @@ export function AppProvider({ children, operator, signOut }) {
           confetti({ particleCount: 75, spread: 60, origin: { y: 0.7 } });
         }
       } catch (error) {
-        console.warn('Checkout effects unavailable', error);
+        reportError('checkout-effects-failed', error);
       }
       return true;
     } catch (error) {
-      console.error('Order settlement failed', error);
+      reportError('checkout-failed', error);
       showToast(error.code ? 'Bill was not saved. Keep the tender details and retry saving.' : error.message, 'error');
       return false;
     } finally {

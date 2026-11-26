@@ -11,6 +11,8 @@ import { mergeSavedCategories, removeSavedCategory } from '../src/domain/categor
 import { mergeSavedAddons, removeSavedAddon } from '../src/domain/addons.js';
 import { escapeCsv, MAX_MENU_CSV_SIZE, parseMenuCsv } from '../src/domain/csv.js';
 import { matchesProductSearch, getProductPrices, matchesPriceExpression } from '../src/domain/products.js';
+import { parseCounterDrafts, clearCounterDrafts } from '../src/domain/drafts.js';
+import { publicError, reportError } from '../src/services/errors.js';
 
 test('new bills total menu prices less the rounded discount', () => {
   assert.deepEqual(calculateBill([{ price: 140, quantity: 2 }, { price: 260, quantity: 1 }], 10),
@@ -98,6 +100,31 @@ test('owner and staff routes enforce opposite POS vs administration access', () 
 test('restore rejects incomplete backups before replacing a workspace', () => {
   assert.throws(() => validateBackup({ database: 'BrewBitePOS_DB_v2', version: 1, settings: {}, orders: [] }),
     /invalid or duplicate tables/);
+});
+
+test('corrupt persisted drafts cannot crash billing or carry invalid money into checkout', () => {
+  const good = { id: 'draft-1', items: [{ id: 'i1', productId: 'p1', name: 'Milk', price: 25, quantity: 1 }],
+    discountPercent: 0, fixedDiscount: 0, customer: null };
+  assert.deepEqual(parseCounterDrafts(JSON.stringify({ Counter: good })), { Counter: good });
+  for (const saved of ['invalid', '[]', 'null', JSON.stringify({ Counter: { ...good, items: null } }),
+    JSON.stringify({ Counter: { ...good, items: [{ price: -25, quantity: -1 }] } })]) {
+    assert.deepEqual(parseCounterDrafts(saved), {});
+  }
+  const values = new Map([['brew-bite-counter-drafts:a:live', '{}'], ['brew-bite-counter-drafts:b:live', '{}'], ['other', 'value']]);
+  clearCounterDrafts({ get length() { return values.size; }, key: index => [...values.keys()][index], removeItem: key => values.delete(key) }, 'a');
+  assert.equal(values.has('brew-bite-counter-drafts:a:live'), false);
+  assert.equal(values.has('brew-bite-counter-drafts:b:live'), true);
+  assert.equal(values.has('other'), true);
+});
+
+test('provider errors and logs do not expose sensitive messages or stack traces', () => {
+  const error = Object.assign(new Error('private customer details'), { code: 'permission-denied' });
+  assert.doesNotMatch(publicError(error), /private customer/);
+  const previous = console.error;
+  let output;
+  try { console.error = value => { output = value; }; reportError('checkout-failed', error); }
+  finally { console.error = previous; }
+  assert.deepEqual(JSON.parse(output), { event: 'checkout-failed', code: 'permission-denied' });
 });
 
 test('backup validation accepts current and legacy table records', () => {

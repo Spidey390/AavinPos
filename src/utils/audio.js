@@ -1,4 +1,5 @@
 // Web Audio API Synthesizer for POS Sound Effects
+import { reportError } from '../services/errors';
 
 let audioCtx = null;
 
@@ -74,6 +75,6 @@ export const playSound = (type = 'beep', soundEnabled = true) => {
       osc.stop(now + 0.08);
     }
   } catch (e) {
-    console.warn('Audio playback error', e);
+    reportError('audio-playback-failed', e);
   }
 };

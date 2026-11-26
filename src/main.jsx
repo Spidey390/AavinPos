@@ -1,10 +1,14 @@
-import React from 'react';
+import React, { lazy, Suspense } from 'react';
 import ReactDOM from 'react-dom/client';
-import OperatorGate from './components/auth/OperatorGate';
+import ErrorBoundary from './components/ErrorBoundary';
 import './index.css';
+
+const OperatorGate = lazy(() => import('./components/auth/OperatorGate'));
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
-    <OperatorGate />
+    <ErrorBoundary>
+      <Suspense fallback={<p role="status" className="p-6 text-white">Opening POS…</p>}><OperatorGate /></Suspense>
+    </ErrorBoundary>
   </React.StrictMode>
 );
