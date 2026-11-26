@@ -28,6 +28,20 @@
           "functionId": "initializeWorkspace",
           "region": "asia-south1"
         }
+      },
+      {
+        "source": "/api/saveCustomer",
+        "function": {
+          "functionId": "saveCustomer",
+          "region": "asia-south1"
+        }
+      },
+      {
+        "source": "/api/archiveCustomer",
+        "function": {
+          "functionId": "archiveCustomer",
+          "region": "asia-south1"
+        }
       }
     ],
     "headers": [

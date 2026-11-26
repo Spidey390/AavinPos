@@ -17,88 +17,17 @@ service cloud.firestore {
     function noTableItems(table) {
       return table.get('activeOrder', null) == null || table.activeOrder.items.size() == 0;
     }
-    function seqAfter(id) {
-      return getAfter(/databases/$(database)/documents/posWorkspaces/$(id)/config/invoiceSequence).data;
-    }
-    function savedOrder(id, orderId) {
-      return getAfter(/databases/$(database)/documents/posWorkspaces/$(id)/orders/$(orderId)).data;
-    }
     function money(value) {
       return value is number && value >= 0 && value <= 1000000000 &&
         math.abs(value * 100 - math.round(value * 100)) < 0.00001;
     }
-    function cents(value) { return math.round(value * 100); }
-    function signedMoney(value) { return value is number && money(math.abs(value)); }
-    function settings(id) {
-      return get(/databases/$(database)/documents/posWorkspaces/$(id)/config/settings).data;
+    match /posWorkspaces/{workspace}/customerAccounts/{customer}/{document=**} {
+      allow read: if owner();
+      allow write: if false;
     }
-    function validBill(id, order) {
-      return money(order.subtotal) && money(order.discount) && money(order.total) &&
-        order.discount <= order.subtotal && cents(order.total) == cents(order.subtotal) - cents(order.discount) &&
-        order.discountPercent is number && order.discountPercent >= 0 && order.discountPercent <= 100 &&
-        money(order.fixedDiscount) &&
-        (settings(id).get('allowCashierDiscounts', false) == true ||
-          (order.discount == 0 && order.discountPercent == 0 && order.fixedDiscount == 0)) &&
-        order.items is list && order.items.size() > 0 && order.items.size() <= 500 &&
-        order.createdAt is string && order.createdAt.size() <= 40 &&
-        order.customerPhone is string && order.customerPhone.size() <= 30 &&
-        order.customerName is string && order.customerName.size() <= 100 &&
-        order.referenceNo is string && order.referenceNo.size() <= 120;
-    }
-    function appendedTransaction(previous, next, entry) {
-      return previous is list && next is list && next.size() > 0 && next.size() <= 50 &&
-        (previous.size() < 50 ? next == previous.concat([entry]) :
-          next == previous.removeAll([previous[0]]).concat([entry]));
-    }
-    function customerSale(id, before, after) {
-      let orderId = seqAfter(id).lastOrderId;
-      let order = savedOrder(id, orderId);
-      let credit = order.paymentMethod in ['Account', 'Credit'];
-      let ledger = after.accountTransactions;
-      return !exists(/databases/$(database)/documents/posWorkspaces/$(id)/orders/$(orderId)) &&
-        order.cashierUid == request.auth.uid && order.customerPhone == before.phone &&
-        after.diff(before).affectedKeys().hasOnly(['ordersCount', 'totalSpent', 'avgOrderValue', 'dueBalance', 'accountTransactions']) &&
-        after.ordersCount == before.ordersCount + 1 &&
-        money(after.totalSpent) && cents(after.totalSpent) == cents(before.totalSpent) + cents(order.total) &&
-        after.avgOrderValue == math.round(after.totalSpent / after.ordersCount * 10) / 10 &&
-        signedMoney(after.dueBalance) &&
-        cents(after.dueBalance) == cents(before.get('dueBalance', 0)) + (credit ? cents(order.total) : 0) &&
-        (before.get('creditLimit', 0) == 0 || !credit || after.dueBalance <= before.creditLimit) &&
-        (credit ? (ledger.size() > 0 && ledger[ledger.size() - 1].type == 'charge' &&
-          ledger[ledger.size() - 1].orderId == order.id && ledger[ledger.size() - 1].amount == order.total &&
-          ledger[ledger.size() - 1].balanceAfter == after.dueBalance &&
-          appendedTransaction(before.get('accountTransactions', []), ledger, ledger[ledger.size() - 1])) :
-          ledger == before.get('accountTransactions', []));
-    }
-    function customerPayment(before, after) {
-      let ledger = after.accountTransactions;
-      let entry = ledger[ledger.size() - 1];
-      return after.diff(before).affectedKeys().hasOnly(['dueBalance', 'accountTransactions', 'lastPaymentAt', 'lastPaymentAmount']) &&
-        appendedTransaction(before.get('accountTransactions', []), ledger, entry) &&
-        entry.keys().hasOnly(['id', 'date', 'type', 'amount', 'method', 'referenceNo', 'notes', 'balanceAfter']) &&
-        entry.type == 'payment' && money(entry.amount) && entry.amount > 0 &&
-        entry.method in ['Cash', 'UPI', 'Card'] && entry.referenceNo is string && entry.referenceNo.size() <= 120 &&
-        entry.notes is string && entry.notes.size() <= 500 && entry.date is string &&
-        after.lastPaymentAt == entry.date && after.lastPaymentAmount == entry.amount &&
-        signedMoney(after.dueBalance) && cents(after.dueBalance) == cents(before.get('dueBalance', 0)) - cents(entry.amount) &&
-        entry.balanceAfter == after.dueBalance;
-    }
-    function validAccountCharge(id, order) {
-      let identity = 'customers-phone-' + order.customerPhone.replace('[+]', '%2B');
-      let customerId = get(/databases/$(database)/documents/posWorkspaces/$(id)/identity/$(identity)).data.id;
-      let before = get(/databases/$(database)/documents/posWorkspaces/$(id)/customers/$(customerId)).data;
-      let after = getAfter(/databases/$(database)/documents/posWorkspaces/$(id)/customers/$(customerId)).data;
-      return before.phone == order.customerPhone && after.ordersCount == before.ordersCount + 1 &&
-        cents(after.dueBalance) == cents(before.get('dueBalance', 0)) + cents(order.total) &&
-        (before.get('creditLimit', 0) == 0 || after.dueBalance <= before.creditLimit);
-    }
-    function validTender(order) {
-      return money(order.amountReceived) && (
-        (order.paymentMethod == 'Cash' && order.amountReceived >= order.total) ||
-        (order.paymentMethod in ['UPI', 'Card', 'Account', 'Credit'] && order.amountReceived == order.total) ||
-        (order.paymentMethod == 'Split' && money(order.splitBreakdown.cash) && money(order.splitBreakdown.upi) &&
-          cents(order.splitBreakdown.cash) + cents(order.splitBreakdown.upi) == cents(order.total))
-      );
+    match /posWorkspaces/{workspace}/orders/{invoice}/{document=**} {
+      allow read: if owner();
+      allow write: if false;
     }
     match /operators/{uid} {
       allow get: if request.auth != null && (request.auth.uid == uid || owner());
@@ -134,11 +63,11 @@ service cloud.firestore {
       // An owner can stage a replacement workspace. Staff can only read and
       // operate the active workspace, and owners cannot sell in it.
       allow read, write: if owner() && !active(id) && type in [
-        'tables', 'products', 'customers', 'suppliers', 'purchases',
+        'tables', 'products', 'suppliers', 'purchases',
         'expenses', 'staff', 'rawMaterials', 'auditLogs', 'identity'
       ];
-      allow read: if active(id) && (owner() || (staff() && type in ['config', 'tables', 'products', 'customers', 'orders', 'identity']));
-      allow write: if active(id) && owner() && type in ['products', 'customers', 'suppliers', 'purchases', 'expenses', 'staff', 'identity', 'rawMaterials', 'auditLogs'];
+      allow read: if active(id) && (owner() || (staff() && type in ['config', 'tables', 'products', 'orders', 'identity']));
+      allow write: if active(id) && owner() && type in ['products', 'suppliers', 'purchases', 'expenses', 'staff', 'identity', 'rawMaterials', 'auditLogs'];
       allow update: if type == 'config' && active(id) && owner() && key == 'settings' &&
         request.resource.data.gstRate is number && request.resource.data.gstRate >= 0 &&
         request.resource.data.gstRate <= 100 &&
@@ -164,26 +93,9 @@ service cloud.firestore {
         money(request.resource.data.amount) && request.resource.data.amount > 0 &&
         request.resource.data.reason is string && request.resource.data.reason.size() > 0 &&
         request.resource.data.reason.size() <= 200;
-      allow create: if type == 'customers' && active(id) && staff() &&
-        request.resource.data.keys().hasOnly(['id', 'name', 'phone', 'email', 'notes', 'ordersCount', 'totalSpent',
-          'avgOrderValue', 'dueBalance', 'creditLimit', 'accountTransactions']) &&
-        request.resource.data.id == key && request.resource.data.name is string &&
-        request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 100 &&
-        request.resource.data.phone.matches('[+][0-9]{8,15}') &&
-        request.resource.data.get('email', '') is string && request.resource.data.get('email', '').size() <= 120 &&
-        request.resource.data.get('notes', '') is string && request.resource.data.get('notes', '').size() <= 500 &&
-        request.resource.data.ordersCount == 0 && request.resource.data.totalSpent == 0 &&
-        request.resource.data.avgOrderValue == 0 && request.resource.data.dueBalance == 0 &&
-        request.resource.data.creditLimit == 0 && request.resource.data.accountTransactions == [] &&
-        getAfter(/databases/$(database)/documents/posWorkspaces/$(id)/identity/$("customers-phone-" + request.resource.data.phone.replace('[+]', '%2B'))).data.id == key;
-      allow update: if type == 'customers' && active(id) && staff() && (
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['dueBalance', 'accountTransactions', 'lastPaymentAt', 'lastPaymentAmount']) ?
-          customerPayment(resource.data, request.resource.data) : customerSale(id, resource.data, request.resource.data)
-      );
-      allow create: if type == 'identity' && active(id) && staff() &&
-        request.resource.data.keys().hasOnly(['id']) && request.resource.data.id is string &&
-        key == 'customers-phone-' + getAfter(/databases/$(database)/documents/posWorkspaces/$(id)/customers/$(request.resource.data.id)).data.phone.replace('[+]', '%2B');
-
+      allow read: if type == 'customers' && active(id) && staff() && resource.data.financialSchema == 2;
+      // Customer summaries, private accounts, financial events and customer identity
+      // mappings are created only through validated callable/admin transactions.
       // Invoices and invoice sequencing are written only by callable Admin SDK transactions.
       allow write: if false;
     }

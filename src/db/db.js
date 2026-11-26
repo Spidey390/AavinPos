@@ -1,7 +1,7 @@
 import { callFinancial } from '../services/functions';
 import {
   collection, doc, getDocFromServer, getDocsFromServer, onSnapshot,
-  runTransaction, writeBatch, query, where
+  runTransaction, writeBatch, query, where, orderBy, limit, startAfter
 } from 'firebase/firestore';
 import { firestore } from '../services/firebase';
 import { brandingRef } from '../services/branding';
@@ -42,11 +42,11 @@ export function watchConfig(workspace, next, error) {
   }, error);
 }
 
-export function watchRows(workspace, name, next, error, recordedBy) {
+export function watchRows(workspace, name, next, error, recordedBy, publicOnly = false) {
   const records = store(workspace, name);
-  const source = recordedBy ? query(records, where('recordedBy', '==', recordedBy)) : records;
+  const source = recordedBy ? query(records, where('recordedBy', '==', recordedBy)) : publicOnly ? query(records, where('financialSchema', '==', 2)) : records;
   return onSnapshot(source, { includeMetadataChanges: true }, snapshot => {
-    if (!snapshot.metadata.hasPendingWrites && !snapshot.metadata.fromCache) next(snapshot.docs.map(item => ({ ...item.data(), id: item.id })));
+    if (!snapshot.metadata.hasPendingWrites && !snapshot.metadata.fromCache) next(snapshot.docs.map(item => ({ ...item.data(), id: item.id })).filter(item => !item.archived));
   }, error);
 }
 
@@ -118,7 +118,12 @@ export async function exportDatabaseJSON(workspace) {
       })),
       getDocFromServer(config(workspace)), getDocFromServer(sequence(workspace))
     ]);
-    return { rows: Object.fromEntries(results), settings: settings.data(), next: next.data()?.next ?? 1 };
+    const accounts = await getDocsFromServer(store(workspace, 'customerAccounts'));
+    const financialRecords = await Promise.all(accounts.docs.map(async account => {
+      const [ledger, payments] = await Promise.all(['ledger', 'payments'].map(name => getDocsFromServer(collection(account.ref, name))));
+      return { id: account.id, account: account.data(), ledger: ledger.docs.map(item => item.data()), payments: payments.docs.map(item => item.data()) };
+    }));
+    return { rows: Object.fromEntries(results), financialRecords, settings: settings.data(), next: next.data()?.next ?? 1 };
   }
   const snapshot = await readAll();
   const confirmation = await readAll();
@@ -127,7 +132,7 @@ export async function exportDatabaseJSON(workspace) {
     throw new Error('Records changed during export. Pause edits briefly and retry.');
   }
   return {
-    database: 'BrewBitePOS_DB_v2', version: 1, exportedAt: new Date().toISOString(),
+    database: 'BrewBitePOS_DB_v2', version: 2, financialRecords: snapshot.financialRecords, exportedAt: new Date().toISOString(),
     settings: snapshot.settings, ...snapshot.rows,
     sequences: [{ id: 'cloud', next: snapshot.next }]
   };
@@ -149,8 +154,8 @@ async function replaceWorkspace(workspace, data) {
   });
 }
 
-export const importDatabaseJSON = (workspace, data) => replaceWorkspace(workspace, validateBackup(data));
-export const resetDatabaseToCleanProduction = workspace => replaceWorkspace(workspace, seed);
+export const importDatabaseJSON = async () => { throw new Error('Financial backups must be restored with the trusted administrator workflow.'); };
+export const resetDatabaseToCleanProduction = async () => { throw new Error('Use an administrator-managed workspace reset to preserve financial history.'); };
 
 export const draftRevision = draft => draft?.revision ?? draft?.updatedAt ?? null;
 
@@ -239,6 +244,7 @@ export function deleteRecord(workspace, name, id) {
 }
 
 export function saveUniqueRecord(workspace, name, record) {
+  if (name === 'customers') return callFinancial('saveCustomer', { workspace, customer: { id: record.id, name: record.name, phone: record.phone, email: record.email ?? '', notes: record.notes ?? '', ...(record.creditLimit !== undefined ? { creditLimit: record.creditLimit } : {}), openingDue: record.dueBalance ?? 0 } });
   const ref = row(workspace, name, record.id);
   return runTransaction(firestore, async transaction => {
     const old = (await transaction.get(ref)).data();
@@ -294,6 +300,7 @@ export function saveUniqueRecord(workspace, name, record) {
 }
 
 export function deleteUniqueRecord(workspace, name, id) {
+  if (name === 'customers') return callFinancial('archiveCustomer', { workspace, customerId: id });
   const ref = row(workspace, name, id);
   return runTransaction(firestore, async transaction => {
     const old = (await transaction.get(ref)).data();
@@ -352,42 +359,7 @@ export function executeOrderTransaction(workspace, { order, tableRevision, custo
   });
 }
 
-export function recordCustomerAccountPayment(workspace, customerId, { amount, method = 'Cash', referenceNo = '', notes = '' }) {
-  const payAmount = Number(amount);
-  if (!isMoney(payAmount) || payAmount <= 0) throw new Error('Enter a positive payment amount with up to two decimal places.');
-  if (!['Cash', 'UPI', 'Card'].includes(method)) throw new Error('Choose Cash, UPI, or Card for the account payment.');
-  const customerRef = row(workspace, 'customers', customerId);
-  return runTransaction(firestore, async transaction => {
-    const customer = (await transaction.get(customerRef)).data();
-    if (!customer) throw new Error('Customer not found.');
-
-    const recordedAt = new Date().toISOString();
-    const currentDue = Number(customer.dueBalance) || 0;
-    const newDue = Number((currentDue - payAmount).toFixed(2));
-    const prevTransactions = Array.isArray(customer.accountTransactions) ? customer.accountTransactions : [];
-    const newTransactions = [
-      ...prevTransactions.slice(-49),
-      {
-        id: 'tx-' + Date.now(),
-        date: recordedAt,
-        type: 'payment',
-        amount: payAmount,
-        method,
-        referenceNo: sanitizeText(referenceNo, 120),
-        notes: sanitizeText(notes, 500),
-        balanceAfter: newDue
-      }
-    ];
-
-    transaction.update(customerRef, {
-      dueBalance: newDue,
-      accountTransactions: newTransactions,
-      lastPaymentAt: recordedAt,
-      lastPaymentAmount: payAmount
-    });
-    return { dueBalance: newDue, amount: payAmount };
-  });
-}
+export const recordCustomerAccountPayment = () => { throw new Error('Payment recording requires the callable payment service.'); };
 
 export function refundOrder(workspace, order, refund) {
   const ref = row(workspace, 'orders', order.id);
@@ -400,4 +372,11 @@ export function refundOrder(workspace, order, refund) {
     }
     transaction.update(ref, { refund: { ...refund, amount: current.total } });
   });
+}
+
+export async function loadCustomerLedger(workspace, customerId, cursor = null) {
+  const ledger = collection(firestore, 'posWorkspaces', workspace, 'customerAccounts', customerId, 'ledger');
+  const ordered = query(ledger, orderBy('date', 'desc'), limit(101), ...(cursor ? [startAfter(cursor)] : []));
+  const page = await getDocsFromServer(ordered);
+  return { rows: page.docs.slice(0, 100).map(item => ({ ...item.data(), id: item.id })), cursor: page.docs[99] ?? null, hasMore: page.size > 100 };
 }

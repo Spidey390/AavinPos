@@ -9,6 +9,7 @@ const requireFunctions = createRequire(new URL('../functions/package.json', impo
 const { initializeApp: initializeAdminApp, deleteApp: deleteAdminApp } = requireFunctions('firebase-admin/app');
 const { getFirestore: getAdminFirestore } = requireFunctions('firebase-admin/firestore');
 import { createFinancialService } from '../functions/src/financial.js';
+import { planMigration, applyMigration } from '../functions/src/migration.js';
 
 setLogLevel('silent'); // Expected permission denials are asserted below.
 
@@ -50,10 +51,12 @@ beforeEach(async () => {
       'posConfig/branding': { brandName: 'Test POS' },
       'posWorkspaces/live/config/settings': { brandName: 'Test POS', gstRate: 0, startingNumber: 1001, invoicePrefix: 'AP-', allowCashierDiscounts: false },
       'posWorkspaces/live/config/invoiceSequence': { next: 1001, count: 0 },
+      'posWorkspaces/live/config/financialMigration': { status: 'ready', schemaVersion: 2 },
+      'posWorkspaces/live/customerAccounts/c1': { status: 'ready', creditLimit: 150, historyComplete: true },
       'posWorkspaces/live/products/p1': { id: 'p1', name: 'Milk', price: 25 },
       'posWorkspaces/live/customers/c1': {
         id: 'c1', name: 'Customer', phone: '+919000000000', ordersCount: 0, totalSpent: 0,
-        avgOrderValue: 0, dueBalance: 100, creditLimit: 150, accountTransactions: []
+        avgOrderValue: 0, dueBalance: 100, financialSchema: 2, archived: false
       },
       'posWorkspaces/live/identity/customers-phone-%2B919000000000': { id: 'c1' },
       'posWorkspaces/archive/products/p1': { id: 'p1', name: 'Archived Milk', price: 20 },
@@ -134,7 +137,8 @@ test('staff customer creation validates zero balances and a matching unique iden
   const batch = writeBatch(db);
   batch.set(doc(db, 'posWorkspaces/live/customers/c2'), customer);
   batch.set(doc(db, 'posWorkspaces/live/identity/customers-phone-%2B919000000001'), { id: 'c2' });
-  await assertSucceeds(batch.commit());
+  await assertFails(batch.commit());
+  await invoke('saveCustomer', { workspace: 'live', customer: { id: 'c2', name: 'New customer', phone: '+919000000001' } });
 });
 
 test('staff cannot directly rewrite balances, visits, spend or ledger history', async () => {
@@ -151,11 +155,11 @@ test('account payments preserve history and exactly reconcile the balance', asyn
     method: 'Cash', referenceNo: '', notes: '', balanceAfter: 80 };
   const changes = { dueBalance: 80, accountTransactions: [entry], lastPaymentAt: entry.date, lastPaymentAmount: 20 };
   await assertFails(updateDoc(ref, { ...changes, dueBalance: 0 }));
-  await assertSucceeds(updateDoc(ref, changes));
+  await assertFails(updateDoc(ref, changes));
   await assertFails(updateDoc(ref, { ...changes, dueBalance: 60 }));
   const next = { ...entry, id: 'tx-2', balanceAfter: 60 };
   await assertFails(updateDoc(ref, { ...changes, dueBalance: 60, accountTransactions: [next] }));
-  await assertSucceeds(updateDoc(ref, { ...changes, dueBalance: 60, accountTransactions: [entry, next] }));
+  await assertFails(updateDoc(ref, { ...changes, dueBalance: 60, accountTransactions: [entry, next] }));
 });
 
 test('cash checkout runs on the server and direct invoice writes are denied', async () => {
@@ -227,12 +231,61 @@ test('catalog variants and add-ons are priced from current database records', as
   assert.equal(saved.items[0].price, 45);
 });
 
-test('KNOWN BLOCKER: staff can read ledger fields hidden by the owner-only UI', async () => {
-  await env.withSecurityRulesDisabled(context => updateDoc(doc(context.firestore(), 'posWorkspaces/live/customers/c1'), {
-    accountTransactions: [{ id: 'private-history', type: 'payment', amount: 100 }]
-  }));
-  const snapshot = await assertSucceeds(getDoc(doc(dbFor('staff-a'), 'posWorkspaces/live/customers/c1')));
-  assert.equal(snapshot.data().accountTransactions[0].id, 'private-history');
+test('regression: staff cannot read private ledger or legacy embedded history', async () => {
+  await env.withSecurityRulesDisabled(async context => {
+    const db = context.firestore();
+    await setDoc(doc(db, 'posWorkspaces/live/customerAccounts/c1/ledger/private-history'), { type: 'payment', amount: 100 });
+    await setDoc(doc(db, 'posWorkspaces/live/customers/legacy'), { name: 'Legacy', accountTransactions: [{ amount: 100 }] });
+  });
+  await assertFails(getDoc(doc(dbFor('staff-a'), 'posWorkspaces/live/customerAccounts/c1')));
+  await assertFails(getDocs(collection(dbFor('staff-a'), 'posWorkspaces/live/customerAccounts/c1/ledger')));
+  await assertFails(getDoc(doc(dbFor('staff-a'), 'posWorkspaces/live/customers/legacy')));
+  await assertFails(getDocs(collection(dbFor('staff-a'), 'posWorkspaces/live/customers')));
+  await assertSucceeds(getDocs(query(collection(dbFor('staff-a'), 'posWorkspaces/live/customers'), where('financialSchema', '==', 2))));
+  await assertSucceeds(getDocs(collection(dbFor('owner'), 'posWorkspaces/live/customerAccounts/c1/ledger')));
+  await assertSucceeds(getDoc(doc(dbFor('owner'), 'posWorkspaces/live/customerAccounts/c1')));
+});
+
+test('customer administration preserves server balances and private limits', async () => {
+  await invoke('saveCustomer', { workspace: 'live', customer: { id: 'c1', name: 'Renamed', phone: '+919000000000', creditLimit: 130, openingDue: 9000 } }, 'owner');
+  const customer = (await getDoc(doc(dbFor('staff-a'), 'posWorkspaces/live/customers/c1'))).data();
+  assert.equal(customer.dueBalance, 100);
+  assert.equal(customer.creditLimit, undefined);
+  assert.equal((await getDoc(doc(dbFor('owner'), 'posWorkspaces/live/customerAccounts/c1'))).data().creditLimit, 130);
+  await assert.rejects(invoke('saveCustomer', { workspace: 'live', customer: { id: 'c1', name: 'Attack', phone: '+919000000000', creditLimit: 999 } }));
+  await assert.rejects(invoke('archiveCustomer', { workspace: 'live', customerId: 'c1' }, 'owner'));
+});
+
+test('migration dry-run is read-only, rejects stale plans, and moves legacy history privately', async () => {
+  const admin = getAdminFirestore(adminApp);
+  const ref = admin.doc('posWorkspaces/live/customers/legacy');
+  await ref.set({ id: 'legacy', name: 'Legacy', phone: '+919000000001', dueBalance: 80, creditLimit: 150, ordersCount: 0, totalSpent: 0,
+    accountTransactions: [{ id: 'old', type: 'payment', date: '2026-11-25T00:00:00.000Z', amount: 20, method: 'Cash', balanceAfter: 80 }] });
+  const plan = await planMigration(admin, projectId, 'live');
+  assert.equal(plan.customers.length, 1);
+  assert.equal(plan.errors.length, 0);
+  assert.equal((await ref.get()).data().financialSchema, undefined);
+  assert.equal((await admin.doc('posWorkspaces/live/customerAccounts/legacy').get()).exists, false);
+  await applyMigration(admin, projectId, plan);
+  await applyMigration(admin, projectId, plan);
+  const publicData = (await ref.get()).data();
+  assert.equal(publicData.accountTransactions, undefined);
+  assert.equal(publicData.creditLimit, undefined);
+  assert.equal(publicData.dueBalance, 80);
+  const payments = await admin.collection('posWorkspaces/live/customerAccounts/legacy/payments').get();
+  assert.equal(payments.size, 1);
+  assert.equal((await admin.doc('posWorkspaces/live/customerAccounts/legacy').get()).data().historyComplete, false);
+  await assertFails(getDocs(collection(dbFor('staff-a'), 'posWorkspaces/live/customerAccounts/legacy/payments')));
+});
+
+test('migration blocks invalid history and cannot apply an altered dry-run plan', async () => {
+  const admin = getAdminFirestore(adminApp);
+  await admin.doc('posWorkspaces/live/customers/bad').set({ name: 'Bad', phone: '+919000000002', dueBalance: 10,
+    accountTransactions: [{ type: 'payment', amount: -1, date: 'invalid' }] });
+  const plan = await planMigration(admin, projectId, 'live');
+  assert.equal(plan.errors.length, 1);
+  await assert.rejects(applyMigration(admin, projectId, plan));
+  await assert.rejects(applyMigration(admin, 'other-project', { ...plan, errors: [] }));
 });
 
 test('account refunds remain denied until server reconciliation is available', async () => {
@@ -264,16 +317,8 @@ test('concurrent real account checkouts respect the current credit limit', async
   assert.equal(customer.ordersCount, 2);
 });
 
-test('real account payments work with a full rolling ledger and reject fractional paise', async () => {
-  await env.withSecurityRulesDisabled(context => updateDoc(doc(context.firestore(), 'posWorkspaces/live/customers/c1'), {
-    accountTransactions: Array.from({ length: 50 }, (_, n) => ({ id: `old-${n}`, amount: 1, type: 'payment' }))
-  }));
-  const result = await database.recordCustomerAccountPayment('live', 'c1', { amount: 12.50, method: 'UPI' });
-  assert.equal(result.dueBalance, 87.50);
-  const customer = (await getDoc(doc(dbFor('staff-a'), 'posWorkspaces/live/customers/c1'))).data();
-  assert.equal(customer.accountTransactions.length, 50);
-  assert.equal(customer.accountTransactions[0].id, 'old-1');
-  assert.throws(() => database.recordCustomerAccountPayment('live', 'c1', { amount: 1.001 }), /two decimal/);
+test('direct payment recording is closed while the callable payment service is introduced', () => {
+  assert.throws(() => database.recordCustomerAccountPayment('live', 'c1', { amount: 12.50, method: 'UPI' }), /callable payment service/);
 });
 
 test('data subscriptions wait for the server instead of emitting an empty initial cache', { timeout: 5000 }, async () => {
@@ -285,4 +330,16 @@ test('data subscriptions wait for the server instead of emitting an empty initia
     assert.equal(rows.length, 1);
     assert.equal(rows[0].id, 'p1');
   } finally { stop?.(); }
+});
+
+
+test('stale migration plans fail closed without changing customer balances', async () => {
+  const admin = getAdminFirestore(adminApp), ref = admin.doc('posWorkspaces/live/customers/stale');
+  await ref.set({ id: 'stale', name: 'Stale', phone: '+919000000003', dueBalance: 10, accountTransactions: [] });
+  const plan = await planMigration(admin, projectId, 'live');
+  await ref.update({ name: 'Changed after dry-run' });
+  await assert.rejects(applyMigration(admin, projectId, plan), /Source changed/);
+  assert.equal((await ref.get()).data().dueBalance, 10);
+  assert.equal((await admin.doc('posWorkspaces/live/config/financialMigration').get()).data().status, 'migrating');
+  await assert.rejects(invoke('checkout', checkoutData()), { code: 'failed-precondition' });
 });

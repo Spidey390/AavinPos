@@ -35,16 +35,16 @@ function loadCounterDrafts(key) {
   }
 }
 
-function useRows(workspace, name, enabled, onError, attempt, recordedBy) {
+function useRows(workspace, name, enabled, onError, attempt, recordedBy, publicOnly = false) {
   const [state, setState] = useState(null);
   useEffect(() => {
     if (!workspace || !enabled) return;
     let active = true;
     const stop = watchRows(workspace, name, rows => {
       if (active) setState({ workspace, rows, attempt });
-    }, error => { if (active) onError(error); }, recordedBy);
+    }, error => { if (active) onError(error); }, recordedBy, publicOnly);
     return () => { active = false; stop(); };
-  }, [workspace, name, enabled, onError, attempt, recordedBy]);
+  }, [workspace, name, enabled, onError, attempt, recordedBy, publicOnly]);
 
   const ready = state?.workspace === workspace && state?.attempt === attempt;
   return [enabled && ready ? state.rows : emptyList, !enabled || ready];
@@ -70,11 +70,17 @@ export function AppProvider({ children, operator, signOut }) {
   const readsOrders = ['orders', 'dashboard', 'reports', 'customers'].includes(activeView);
   const [tables, tablesReady] = useRows(workspace, 'tables', !isOwner || ['tables', 'dashboard'].includes(activeView), onReadError, bootAttempt);
   const [products, productsReady] = useRows(workspace, 'products', !isOwner || ['menu', 'reports', 'dashboard'].includes(activeView), onReadError, bootAttempt);
-  const [customers, customersReady] = useRows(workspace, 'customers', !isOwner || ['customers', 'dashboard'].includes(activeView), onReadError, bootAttempt);
+  const [publicCustomers, customersReady] = useRows(workspace, 'customers', !isOwner || ['customers', 'dashboard'].includes(activeView), onReadError, bootAttempt, undefined, !isOwner);
+  const [privateAccounts, accountsReady] = useRows(workspace, 'customerAccounts', isOwner && activeView === 'customers', onReadError, bootAttempt);
+  const customers = React.useMemo(() => publicCustomers.map(customer => {
+    if (!isOwner) return customer;
+    const account = privateAccounts.find(row => row.id === customer.id);
+    return { ...customer, creditLimit: account?.creditLimit ?? 0, historyComplete: account?.historyComplete ?? false, openingBalance: account?.openingBalance ?? 0 };
+  }), [publicCustomers, privateAccounts, isOwner]);
   const [orderRows, ordersReady] = useRows(workspace, 'orders', readsOrders, onReadError, bootAttempt);
   const orders = React.useMemo(() => [...orderRows].sort((a, b) => b.createdAt.localeCompare(a.createdAt)), [orderRows]);
   const [expenses, expensesReady] = useRows(workspace, 'expenses', (['expenses', 'dashboard'].includes(activeView) || (isOwner && activeView === 'reports')), onReadError, bootAttempt, isOwner ? undefined : operator.uid);
-  const isDbReady = configReady && tablesReady && productsReady && customersReady && ordersReady && expensesReady;
+  const isDbReady = configReady && tablesReady && productsReady && customersReady && ordersReady && expensesReady && accountsReady;
   const categories = React.useMemo(() => {
     const saved = mergeSavedCategories(settings.commonCategories || settings.categories);
     const fromProducts = products.map(p => p.category);
@@ -474,7 +480,7 @@ export function AppProvider({ children, operator, signOut }) {
     <AppContext.Provider value={{
       dbStatus, isDbReady, dbError, dbName: 'Cloud Firestore', operator, isOwner, signOut,
       retryDatabase: () => { setDbError(null); setDbStatus('loading'); setBootAttempt(attempt => attempt + 1); },
-      settings, tables, products, customers, orders, expenses,
+      workspaceId: workspace, settings, tables, products, customers, orders, expenses,
       categories,
       setSettings: changes => commit(() => updateSettings(workspace, changes), 'Settings saved.'),
       deleteSavedCategory: categoryName => commit(async () => {

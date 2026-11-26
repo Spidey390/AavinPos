@@ -18,3 +18,6 @@ const callable = name => onCall(options, async request => {
 });
 export const checkout = callable('checkout');
 export const initializeWorkspace = callable('initializeWorkspace');
+
+export const saveCustomer = callable('saveCustomer');
+export const archiveCustomer = callable('archiveCustomer');

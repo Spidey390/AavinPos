@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Plus, Search, Eye, Edit, Trash2, X, Wallet, IndianRupee, 
   FileText, Copy, Check, ArrowDownLeft, ArrowUpRight, CheckCircle2,
@@ -6,13 +6,14 @@ import {
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import Dialog from '../layout/Dialog';
+import { loadCustomerLedger } from '../../db/db';
 import { newId } from '../../domain/ids';
 import { sanitizeText, sanitizeNumber } from '../../domain/sanitize';
 import { formatAccountStatement } from '../../domain/customers';
 import { businessDate, shiftDate } from '../../domain/dates';
 
 export default function CustomerCRM() {
-  const { customers, orders = [], isOwner, saveCustomer, deleteCustomer, recordCustomerPayment, showToast } = useApp();
+  const { workspaceId, customers, orders = [], isOwner, saveCustomer, deleteCustomer, recordCustomerPayment, showToast } = useApp();
 
   const [search, setSearch] = useState('');
   const [filterMode, setFilterMode] = useState('all'); // 'all' | 'due' | 'clear'
@@ -21,6 +22,22 @@ export default function CustomerCRM() {
   const [detailsCustomerId, setDetailsCustomerId] = useState(null);
   const [paymentCustomer, setPaymentCustomer] = useState(null);
   const [statementCustomer, setStatementCustomer] = useState(null);
+  const [ledgerPage, setLedgerPage] = useState({ customerId: null, rows: [], loading: false, hasMore: false });
+  const ledgerRows = ledgerPage.customerId === statementCustomer?.id ? ledgerPage.rows : [];
+  useEffect(() => {
+    if (!isOwner || !statementCustomer) return;
+    let active = true;
+    setLedgerPage({ customerId: statementCustomer.id, rows: [], loading: true, hasMore: false });
+    loadCustomerLedger(workspaceId, statementCustomer.id).then(page => { if (active) setLedgerPage({ customerId: statementCustomer.id, ...page, loading: false }); })
+      .catch(() => { if (active) setLedgerPage({ customerId: statementCustomer.id, rows: [], loading: false, error: true }); });
+    return () => { active = false; };
+  }, [workspaceId, isOwner, statementCustomer?.id]);
+  async function loadOlderLedger() {
+    if (ledgerPage.loading) return;
+    setLedgerPage(previous => ({ ...previous, loading: true }));
+    try { const page = await loadCustomerLedger(workspaceId, statementCustomer.id, ledgerPage.cursor); setLedgerPage(previous => ({ ...previous, ...page, rows: [...previous.rows, ...page.rows], loading: false })); }
+    catch { setLedgerPage(previous => ({ ...previous, loading: false, error: true })); }
+  }
   const [statementTab, setStatementTab] = useState('ledger'); // 'ledger' | 'items'
   const [isBusy, setIsBusy] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -46,9 +63,7 @@ export default function CustomerCRM() {
     if (!statementCustomer) return [];
 
     const dateMap = new Map();
-    const txs = Array.isArray(statementCustomer.accountTransactions)
-      ? statementCustomer.accountTransactions
-      : [];
+    const txs = ledgerRows;
 
     // 1. Process accountTransactions
     for (const tx of txs) {
@@ -137,7 +152,7 @@ export default function CustomerCRM() {
 
     // Sort dates newest first
     return Array.from(dateMap.values()).sort((a, b) => b.dateKey.localeCompare(a.dateKey));
-  }, [statementCustomer, orders]);
+  }, [statementCustomer, orders, ledgerRows]);
 
   const totalPurchasedUnits = useMemo(() => {
     return dateWiseItems.reduce((acc, g) => acc + g.totalQty, 0);
@@ -702,7 +717,7 @@ export default function CustomerCRM() {
                     if (statementTab === 'items') {
                       handleCopyDateWiseItems(statementCustomer, dateWiseItems);
                     } else {
-                      handleCopyStatement(statementCustomer);
+                      handleCopyStatement({ ...statementCustomer, accountTransactions: [...ledgerRows].sort((a, b) => a.date.localeCompare(b.date)) });
                     }
                   }}
                   className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[#202838] hover:bg-[#2c374d] text-slate-200 text-xs font-semibold"
@@ -717,6 +732,10 @@ export default function CustomerCRM() {
               </div>
             </div>
 
+            {statementCustomer.historyComplete === false && <p role="status" className="text-sm text-amber-300">History before migration may be incomplete. The cutover balance was preserved.</p>}
+            {ledgerPage.loading && <p role="status">Loading account history…</p>}
+            {ledgerPage.error && <p role="alert">Account history could not be loaded. Reopen the account to retry.</p>}
+            {ledgerPage.hasMore && <button type="button" disabled={ledgerPage.loading} onClick={loadOlderLedger}>Load older entries</button>}
             {/* TAB 1: ACCOUNT LEDGER */}
             {(!isOwner || statementTab === 'ledger') && (
               <div className="flex-1 flex flex-col min-h-0 pt-4">
@@ -764,12 +783,12 @@ export default function CustomerCRM() {
                 {/* Ledger Transactions */}
                 <h4 className="text-xs font-bold text-slate-300 mb-2 shrink-0">Recent Account Transactions</h4>
                 <div className="flex-1 overflow-y-auto min-h-0 space-y-2 pr-1">
-                  {(!statementCustomer.accountTransactions || statementCustomer.accountTransactions.length === 0) ? (
+                  {(!ledgerRows || ledgerRows.length === 0) ? (
                     <p className="text-xs text-slate-500 py-6 text-center">
                       No account transactions recorded yet. When bills are charged to account or payments are recorded, they will appear here.
                     </p>
                   ) : (
-                    [...statementCustomer.accountTransactions].reverse().map(tx => {
+                    [...ledgerRows].map(tx => {
                       const isCharge = tx.type === 'charge';
                       return (
                         <div key={tx.id || tx.date} className="p-3 rounded-xl bg-[#141924] border border-[#232b3b] flex items-center justify-between text-xs">
