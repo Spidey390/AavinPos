@@ -80,7 +80,7 @@ export default function OperationsDashboard() {
 
   // Best selling items aggregated from actual orders
   const bestSellers = useMemo(() => {
-    const counts = {};
+    const counts = Object.create(null);
     summaryOrders.forEach(ord => {
       ord.items?.forEach(it => {
         if (!counts[it.name]) {

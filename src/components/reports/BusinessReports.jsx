@@ -38,7 +38,7 @@ export default function BusinessReports() {
 
   // Dish breakdown aggregated dynamically from actual orders
   const dishSales = useMemo(() => {
-    const dishes = {};
+    const dishes = Object.create(null);
     completedOrders.forEach(o => {
       o.items?.forEach(it => {
         const dishName = it.name || 'Unnamed Item';
@@ -94,7 +94,7 @@ export default function BusinessReports() {
 
   // Category breakdown aggregated dynamically from actual orders
   const categorySales = useMemo(() => {
-    const cats = {};
+    const cats = Object.create(null);
     completedOrders.forEach(o => {
       o.items?.forEach(it => {
         const catName = it.category || catalog.get(it.id) || 'Uncategorized';
@@ -108,7 +108,7 @@ export default function BusinessReports() {
 
   // Cashier ranking dynamically aggregated from actual orders
   const cashierSales = useMemo(() => {
-    const staffSales = {};
+    const staffSales = Object.create(null);
     completedOrders.forEach(o => {
       const cName = o.cashierName || 'Counter Staff';
       if (!staffSales[cName]) staffSales[cName] = { name: cName, bills: 0, sales: 0 };
