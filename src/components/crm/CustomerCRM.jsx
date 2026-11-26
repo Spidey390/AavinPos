@@ -219,6 +219,7 @@ export default function CustomerCRM() {
   };
 
   const handleOpenEdit = (c) => {
+    if (!isOwner) return;
     setEditingCustomer(c);
     setName(c.name);
     setPhone(c.phone);
@@ -248,8 +249,8 @@ export default function CustomerCRM() {
         phone: cleanPhone,
         email: sanitizeText(email, 120),
         notes: sanitizeText(notes, 500),
-        creditLimit: limitNum > 0 ? limitNum : 0,
-        dueBalance: editingCustomer ? (Number(editingCustomer.dueBalance) || 0) : dueNum
+        creditLimit: isOwner && limitNum > 0 ? limitNum : 0,
+        dueBalance: isOwner ? (editingCustomer ? (Number(editingCustomer.dueBalance) || 0) : dueNum) : 0
       });
       if (saved) setShowModal(false);
     } finally {
@@ -550,7 +551,7 @@ export default function CustomerCRM() {
                             <span>Accounts</span>
                           </button>
                         )}
-                        <button
+                        {isOwner && <button
                           type="button"
                           onClick={() => handleOpenEdit(c)}
                           title="Edit Customer"
@@ -558,7 +559,7 @@ export default function CustomerCRM() {
                           className="p-1.5 rounded-lg text-slate-400 hover:text-orange-400 hover:bg-[#252f42] transition-colors"
                         >
                           <Edit className="w-3.5 h-3.5" aria-hidden="true" />
-                        </button>
+                        </button>}
                       </div>
                     </td>
                   </tr>
@@ -958,7 +959,7 @@ export default function CustomerCRM() {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
+              {isOwner && <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="text-slate-400 block mb-1">Credit Limit (₹)</label>
                   <input
@@ -984,7 +985,7 @@ export default function CustomerCRM() {
                     className="w-full bg-[#121620] text-white px-3 py-2 rounded-xl border border-[#263143] focus:outline-none font-mono disabled:opacity-50"
                   />
                 </div>
-              </div>
+              </div>}
 
               <div>
                 <label className="text-slate-400 block mb-1">Email Address</label>
