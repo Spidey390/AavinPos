@@ -1,3 +1,4 @@
+import { callFinancial } from '../services/functions';
 import {
   collection, doc, getDocFromServer, getDocsFromServer, onSnapshot,
   runTransaction, writeBatch, query, where
@@ -103,17 +104,7 @@ async function stageWorkspace(workspace, data) {
   }
 }
 
-export async function initializeWorkspace() {
-  const existing = await getDocFromServer(workspaceRef);
-  if (existing.exists()) return;
-  const workspace = newId();
-  await stageWorkspace(workspace, seed);
-  await runTransaction(firestore, async transaction => {
-    if ((await transaction.get(workspaceRef)).exists()) return;
-    transaction.set(workspaceRef, { workspace });
-    transaction.set(brandingRef, { brandName: initialSettings.brandName });
-  });
-}
+export const initializeWorkspace = () => callFinancial('initializeWorkspace', {});
 
 export async function exportDatabaseJSON(workspace) {
   // Keep exports scoped to a single workspace even if it is switched during the read.
@@ -350,112 +341,15 @@ export async function importProductsBatch(workspace, productList) {
   }
 }
 
-export async function executeOrderTransaction(workspace, { order, tableRevision, customerId }) {
-  const orderRef = row(workspace, 'orders', order.id);
-  const tableRef = order.tableId ? row(workspace, 'tables', order.tableId) : null;
-  const customerRef = customerId ? row(workspace, 'customers', customerId) : null;
-  const sequenceRef = sequence(workspace);
-
-  let observedSequence;
-  const settle = () => runTransaction(firestore, async transaction => {
-    const existing = (await transaction.get(orderRef)).data();
-    if (existing) {
-      if (existing.draftRevision !== order.draftRevision || existing.cashierUid !== order.cashierUid ||
-          existing.paymentMethod !== order.paymentMethod || existing.amountReceived !== order.amountReceived ||
-          existing.referenceNo !== order.referenceNo ||
-          existing.splitBreakdown?.cash !== order.splitBreakdown?.cash ||
-          existing.splitBreakdown?.upi !== order.splitBreakdown?.upi) {
-        throw new Error('This bill was already settled. Review its receipt before handling any further payment.');
-      }
-      return existing;
-    }
-    const [current, settings, table, customer, active] = await Promise.all([
-      transaction.get(sequenceRef).then(result => result.data()),
-      transaction.get(config(workspace)).then(result => result.data()),
-      tableRef && transaction.get(tableRef).then(result => result.data()),
-      customerRef && transaction.get(customerRef).then(result => result.data()),
-      transaction.get(workspaceRef).then(result => result.data())
-    ]);
-    observedSequence = current?.next;
-    if (active?.workspace !== workspace || !settings) {
-      throw new Error('The active workspace changed. Review the bill before settling.');
-    }
-    const invalidOrder = validateCheckoutOrder(order, settings);
-    if (invalidOrder) throw new Error(invalidOrder);
-    if (customerRef && (!customer || customer.phone !== order.customerPhone)) {
-      throw new Error('The customer account changed. Select the customer again before settling.');
-    }
-    if (order.paymentMethod === 'Account' || order.paymentMethod === 'Credit') {
-      const credit = canBillToAccount(customer, order.total);
-      if (!credit.allowed) throw new Error(credit.reason);
-    }
-    if (tableRef && (!table?.activeOrder || draftRevision(table.activeOrder) !== tableRevision)) {
-      throw new Error('The table order changed. Review the current bill before completing payment.');
-    }
-    const startingNumber = settings.startingNumber ?? 1001;
-    const suffix = Math.max(current.next, startingNumber);
-    if (!Number.isSafeInteger(suffix) || suffix >= Number.MAX_SAFE_INTEGER) throw new Error('Invoice sequence exhausted.');
-
-    const saved = {
-      ...order, invoiceNo: (settings.invoicePrefix || initialSettings.invoicePrefix) + suffix,
-      invoiceSequence: suffix, tokenNo: (current.count % 99) + 101
-    };
-    transaction.set(orderRef, saved);
-    transaction.update(sequenceRef, { next: suffix + 1, count: current.count + 1, lastOrderId: saved.id });
-
-    if (customer) {
-      const ordersCount = (Number(customer.ordersCount) || 0) + 1;
-      const totalSpent = Number(((Number(customer.totalSpent) || 0) + saved.total).toFixed(2));
-      const isAccountBill = saved.paymentMethod === 'Account' || saved.paymentMethod === 'Credit';
-      const dueDelta = isAccountBill ? saved.total : 0;
-      const dueBalance = Number(((Number(customer.dueBalance) || 0) + dueDelta).toFixed(2));
-      const prevTransactions = Array.isArray(customer.accountTransactions) ? customer.accountTransactions : [];
-      const newTransactions = isAccountBill ? [
-        ...prevTransactions.slice(-49),
-        {
-          id: 'tx-' + Date.now(),
-          date: new Date().toISOString(),
-          type: 'charge',
-          amount: saved.total,
-          method: 'Account',
-          invoiceNo: saved.invoiceNo,
-          orderId: saved.id,
-          items: (saved.items || []).map(it => ({
-            name: it.name,
-            quantity: Number(it.quantity) || 1,
-            price: Number(it.price) || 0,
-            variant: it.variant || null,
-            subtotal: Number(((Number(it.price) || 0) * (Number(it.quantity) || 1)).toFixed(2))
-          })),
-          balanceAfter: dueBalance
-        }
-      ] : prevTransactions;
-
-      transaction.update(customerRef, {
-        ordersCount,
-        totalSpent,
-        avgOrderValue: Number((totalSpent / ordersCount).toFixed(1)),
-        dueBalance,
-        accountTransactions: newTransactions
-      });
-    }
-    if (tableRef) {
-      transaction.update(tableRef, { status: 'Available', reserved: false, currentOrderTotal: 0, activeOrder: null });
-    }
-    return saved;
+export function executeOrderTransaction(workspace, { order, tableRevision, customerId }) {
+  return callFinancial('checkout', {
+    workspace, idempotencyKey: order.id, customerId: customerId ?? null,
+    tableId: order.tableId ?? null, tableRevision: tableRevision ?? null, channel: order.channel,
+    items: order.items.map(item => ({ productId: item.id, variant: item.variant ?? null, addons: item.addons ?? [], quantity: item.quantity, note: item.note ?? '' })),
+    discountPercent: order.discountPercent ?? 0, paymentMethod: order.paymentMethod,
+    amountReceived: order.amountReceived, splitBreakdown: order.splitBreakdown ?? null,
+    referenceNo: order.referenceNo ?? '', expectedTotal: order.total
   });
-
-  for (let attempt = 0; ; attempt++) {
-    try {
-      return await settle();
-    } catch (error) {
-      if (error.code !== 'permission-denied' || attempt === 2 || observedSequence === undefined) throw error;
-      // A simultaneous settlement can make sequence-dependent rules reject
-      // before Firestore reports the transaction conflict.
-      const latest = (await getDocFromServer(sequenceRef)).data();
-      if (latest?.next === observedSequence) throw error;
-    }
-  }
 }
 
 export function recordCustomerAccountPayment(workspace, customerId, { amount, method = 'Cash', referenceNo = '', notes = '' }) {

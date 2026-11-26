@@ -5,6 +5,9 @@ export function reportError(event, error) {
 }
 
 export function publicError(error, fallback = 'The change could not be saved. Try again.') {
+  if (['functions/invalid-argument', 'functions/failed-precondition', 'functions/already-exists', 'functions/not-found'].includes(error?.code)) {
+    return typeof error.message === 'string' ? error.message.slice(0, 300) : fallback;
+  }
   if (error?.code) return ({
     'permission-denied': 'Access denied. Check your operator permissions and try again.',
     'unavailable': 'The service is unavailable. Check your connection and retry.',

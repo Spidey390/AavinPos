@@ -22,6 +22,7 @@ test('hosting and preview share strict production headers and only health is rew
   assert.match(policy, /script-src 'self';/);
   assert.doesNotMatch(policy, /localhost|127\.0\.0\.1|https:\/\/\*/);
   assert.match(policy, /frame-ancestors 'none'/);
-  assert.deepEqual(firebase.hosting.rewrites, [{ source: '/health', destination: '/health.json' }]);
+  assert.deepEqual(firebase.hosting.rewrites.filter(route => !route.function), [{ source: '/health', destination: '/health.json' }]);
+  assert.ok(firebase.hosting.rewrites.some(route => route.source === '/api/checkout'));
   assert.equal(JSON.parse(await readFile('public/health.json', 'utf8')).status, 'ok');
 });

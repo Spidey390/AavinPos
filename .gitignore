@@ -16,3 +16,9 @@ yarn-error.log*
 
 # Firebase cache
 .firebase/
+
+# Nested server dependencies and local migration reports
+**/node_modules/
+functions/.env*
+!functions/.env.example
+.migration-reports/

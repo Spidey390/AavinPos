@@ -134,7 +134,7 @@ service cloud.firestore {
       // An owner can stage a replacement workspace. Staff can only read and
       // operate the active workspace, and owners cannot sell in it.
       allow read, write: if owner() && !active(id) && type in [
-        'config', 'tables', 'products', 'customers', 'orders', 'suppliers', 'purchases',
+        'tables', 'products', 'customers', 'suppliers', 'purchases',
         'expenses', 'staff', 'rawMaterials', 'auditLogs', 'identity'
       ];
       allow read: if active(id) && (owner() || (staff() && type in ['config', 'tables', 'products', 'customers', 'orders', 'identity']));
@@ -184,35 +184,8 @@ service cloud.firestore {
         request.resource.data.keys().hasOnly(['id']) && request.resource.data.id is string &&
         key == 'customers-phone-' + getAfter(/databases/$(database)/documents/posWorkspaces/$(id)/customers/$(request.resource.data.id)).data.phone.replace('[+]', '%2B');
 
-      allow create: if type == 'orders' && active(id) && staff() &&
-        request.resource.data.id == key && request.resource.data.cashierUid == request.auth.uid &&
-        request.resource.data.status == 'Completed' &&
-        request.resource.data.channel in ['Counter', 'Dine-In', 'Takeaway', 'Delivery'] &&
-        (request.resource.data.channel == 'Dine-In' || request.resource.data.tableId == null) &&
-        request.resource.data.get('refund', null) == null &&
-        validBill(id, request.resource.data) && validTender(request.resource.data) &&
-        (!(request.resource.data.paymentMethod in ['Account', 'Credit']) || validAccountCharge(id, request.resource.data)) &&
-        seqAfter(id).lastOrderId == key &&
-        seqAfter(id).next == request.resource.data.invoiceSequence + 1 &&
-        seqAfter(id).next > get(/databases/$(database)/documents/posWorkspaces/$(id)/config/invoiceSequence).data.next;
-      allow update: if type == 'orders' && active(id) && staff() && resource.data.get('refund', null) == null && (
-        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['refund']) &&
-          resource.data.status == 'Completed' &&
-          get(/databases/$(database)/documents/posWorkspaces/$(id)/config/settings).data.get('allowStaffRefunds', false) == true &&
-          request.resource.data.refund.keys().hasOnly(['amount', 'reason', 'recordedAt', 'cashierUid', 'cashierName']) &&
-          request.resource.data.refund.cashierUid == request.auth.uid &&
-          request.resource.data.refund.amount == resource.data.total &&
-          request.resource.data.refund.reason is string && request.resource.data.refund.reason.size() > 0 &&
-          request.resource.data.refund.reason.size() <= 300)
-      );
-      allow update: if type == 'config' && active(id) && staff() && key == 'invoiceSequence' &&
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['next', 'count', 'lastOrderId']) &&
-        request.resource.data.next is int && request.resource.data.next < 9007199254740991 &&
-        request.resource.data.next == (resource.data.next > settings(id).startingNumber ? resource.data.next : settings(id).startingNumber) + 1 &&
-        request.resource.data.count == resource.data.count + 1 &&
-        !exists(/databases/$(database)/documents/posWorkspaces/$(id)/orders/$(request.resource.data.lastOrderId)) &&
-        savedOrder(id, request.resource.data.lastOrderId).invoiceSequence == request.resource.data.next - 1 &&
-        savedOrder(id, request.resource.data.lastOrderId).invoiceNo == settings(id).invoicePrefix + string(request.resource.data.next - 1);
+      // Invoices and invoice sequencing are written only by callable Admin SDK transactions.
+      allow write: if false;
     }
   }
 }

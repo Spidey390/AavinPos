@@ -1,5 +1,10 @@
 # Production security audit — 26 November 2026
 
+## Follow-up: approved callable backend
+
+H04 is resolved in source: checkout now reads catalog prices/options, settings, customer credit and invoice sequencing inside an Admin SDK transaction. Requests containing price/total fields are rejected; clients cannot write invoices or sequencing. Auth/role checks, per-operator throttling, canonical receipts and idempotent retry checks execute on the server. Custom-priced counter items require owner catalog setup. H05–H07 follow in separate commits. No deployment has occurred.
+
+
 **Final verdict: NOT SAFE TO DEPLOY.** Code-level hardening is implemented on `prod-hardening`, but H04, H05 and H07 require architecture/schema/access-policy decisions before production customer-account use. H06 must be resolved before enabling manual refunds. The source changes have not been deployed.
 
 Stack: React 18 / Vite / Firebase Authentication / Cloud Firestore / Firebase Hosting. There is no Express, Python, custom API server, AI endpoint, SQL server or server upload handler in this repository.

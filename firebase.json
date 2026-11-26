@@ -14,6 +14,20 @@
       {
         "source": "/health",
         "destination": "/health.json"
+      },
+      {
+        "source": "/api/checkout",
+        "function": {
+          "functionId": "checkout",
+          "region": "asia-south1"
+        }
+      },
+      {
+        "source": "/api/initializeWorkspace",
+        "function": {
+          "functionId": "initializeWorkspace",
+          "region": "asia-south1"
+        }
       }
     ],
     "headers": [
@@ -87,6 +101,22 @@
     "ui": {
       "enabled": false
     },
-    "singleProjectMode": true
+    "singleProjectMode": true,
+    "functions": {
+      "host": "127.0.0.1",
+      "port": 5001
+    }
+  },
+  "functions": {
+    "source": "functions",
+    "codebase": "financial",
+    "runtime": "nodejs22",
+    "ignore": [
+      "node_modules",
+      ".git",
+      "test",
+      "scripts",
+      "*.log"
+    ]
   }
 }

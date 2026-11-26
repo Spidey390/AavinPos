@@ -4,23 +4,34 @@ import { after, before, beforeEach, test } from 'node:test';
 import { assertFails, assertSucceeds, initializeTestEnvironment } from '@firebase/rules-unit-testing';
 import { collection, doc, getDoc, getDocs, query, setDoc, updateDoc, where, writeBatch, setLogLevel } from 'firebase/firestore';
 import { createServer } from 'vite';
+import { createRequire } from 'node:module';
+const requireFunctions = createRequire(new URL('../functions/package.json', import.meta.url));
+const { initializeApp: initializeAdminApp, deleteApp: deleteAdminApp } = requireFunctions('firebase-admin/app');
+const { getFirestore: getAdminFirestore } = requireFunctions('firebase-admin/firestore');
+import { createFinancialService } from '../functions/src/financial.js';
 
 setLogLevel('silent'); // Expected permission denials are asserted below.
 
 let env;
 let moduleServer;
 let database;
+let adminApp;
+let service;
 const projectId = 'demo-pos-rules';
 const dbFor = uid => env.authenticatedContext(uid, { email: `${uid}@example.test` }).firestore();
 const profile = (role, active = true) => ({ role, active, name: role, email: `${role}@example.test` });
 
 before(async () => {
   env = await initializeTestEnvironment({ projectId, firestore: { rules: await readFile('firestore.rules', 'utf8') } });
+  adminApp = initializeAdminApp({ projectId }, 'financial-tests');
+  service = createFinancialService(getAdminFirestore(adminApp));
   globalThis.__posTestFirestore = dbFor('staff-a');
+  globalThis.__callFinancial = (name, data) => service[name]({ auth: { uid: 'staff-a' }, data });
   moduleServer = await createServer({ configFile: false, server: { middlewareMode: true }, plugins: [{
     name: 'local-rules-test-database',
     enforce: 'pre',
     load(id) {
+      if (id.endsWith('/src/services/functions.js')) return 'export const callFinancial = globalThis.__callFinancial;';
       if (id.endsWith('/src/services/firebase.js')) return 'export const firestore = globalThis.__posTestFirestore;';
     }
   }] });
@@ -51,7 +62,7 @@ beforeEach(async () => {
     })) await setDoc(doc(db, path), data);
   });
 });
-after(async () => { await moduleServer?.close(); await env?.cleanup(); });
+after(async () => { await moduleServer?.close(); await env?.cleanup(); await deleteAdminApp(adminApp); });
 
 test('anonymous and unprovisioned users cannot read business data', async () => {
   for (const db of [env.unauthenticatedContext().firestore(), dbFor('stranger'), dbFor('disabled')]) {
@@ -147,8 +158,9 @@ test('account payments preserve history and exactly reconcile the balance', asyn
   await assertSucceeds(updateDoc(ref, { ...changes, dueBalance: 60, accountTransactions: [entry, next] }));
 });
 
-test('cash checkout atomically saves an invoice and its sequence', async () => {
-  await assertSucceeds(saleBatch(dbFor('staff-a')).commit());
+test('cash checkout runs on the server and direct invoice writes are denied', async () => {
+  await assertFails(saleBatch(dbFor('staff-a')).commit());
+  await database.executeOrderTransaction('live', { order: order(), customerId: 'c1' });
   assert.equal((await getDoc(doc(dbFor('staff-a'), 'posWorkspaces/live/orders/order-1'))).data().total, 25);
 });
 
@@ -170,23 +182,49 @@ test('account invoices require an atomic customer debit within the credit limit'
     orderId: saved.id, invoiceNo: saved.invoiceNo, items: saved.items, balanceAfter: 125 };
   await assertFails(saleBatch(db, over, { ordersCount: 1, totalSpent: 100, avgOrderValue: 100, dueBalance: 200,
     accountTransactions: [{ ...charge, amount: 100, balanceAfter: 200 }] }).commit());
-  await assertSucceeds(saleBatch(db, saved, { ordersCount: 1, totalSpent: 25, avgOrderValue: 25, dueBalance: 125,
-    accountTransactions: [charge] }).commit());
+  await database.executeOrderTransaction('live', { order: saved, customerId: 'c1' });
 });
 
 test('customer visit and spend updates require a new matching invoice, preventing replay', async () => {
   const db = dbFor('staff-a');
   const changes = { ordersCount: 1, totalSpent: 25, avgOrderValue: 25, dueBalance: 100, accountTransactions: [] };
-  await assertSucceeds(saleBatch(db, order(), changes).commit());
+  await database.executeOrderTransaction('live', { order: order(), customerId: 'c1' });
   await assertFails(updateDoc(doc(db, 'posWorkspaces/live/customers/c1'), { ordersCount: 2, totalSpent: 50 }));
 });
 
-test('KNOWN BLOCKER: scalar rules still trust arbitrary line-item totals', async () => {
-  // This diagnostic intentionally demonstrates the remaining backend decision.
-  // It is not a claim that invoice arithmetic is secure end-to-end.
+function checkoutData(overrides = {}) {
+  return { workspace: 'live', idempotencyKey: 'callable-order', channel: 'Counter',
+    items: [{ productId: 'p1', variant: null, addons: [], quantity: 1, note: '' }],
+    paymentMethod: 'Cash', amountReceived: 25, ...overrides };
+}
+const invoke = (name, data, uid = 'staff-a') => service[name]({ auth: uid ? { uid } : null, data });
+
+test('regression: forged invoice lines and direct writes are rejected', async () => {
   const forged = order({ items: [{ id: 'p1', name: 'Milk', price: 1000, quantity: 100, total: 100000 }] });
-  await assertSucceeds(saleBatch(dbFor('staff-a'), forged).commit());
-  assert.notEqual(forged.items[0].total, forged.subtotal);
+  for (const uid of ['staff-a', 'owner']) await assertFails(saleBatch(dbFor(uid), forged).commit());
+  await assert.rejects(invoke('checkout', checkoutData({ items: [{ productId: 'p1', quantity: 1, price: 1 }] })), { code: 'invalid-argument' });
+  await assert.rejects(invoke('checkout', checkoutData({ total: 1 })), { code: 'invalid-argument' });
+  const saved = await invoke('checkout', checkoutData());
+  assert.equal(saved.total, 25);
+  assert.equal(saved.items[0].price, 25);
+});
+
+test('callables enforce operator status, active workspace and catalog options', async () => {
+  for (const uid of [null, 'stranger', 'disabled', 'owner']) await assert.rejects(invoke('checkout', checkoutData(), uid));
+  await assert.rejects(invoke('checkout', checkoutData({ workspace: 'archive' })), { code: 'failed-precondition' });
+  await assert.rejects(invoke('checkout', checkoutData({ items: [{ productId: 'custom-untrusted', quantity: 1 }] })), { code: 'failed-precondition' });
+  await assert.rejects(invoke('checkout', checkoutData({ items: [{ productId: 'p1', quantity: 1, addons: ['forged-addon'] }] })), { code: 'invalid-argument' });
+  await assert.rejects(invoke('checkout', checkoutData({ discountPercent: 50 })), { code: 'permission-denied' });
+  await assert.rejects(invoke('checkout', checkoutData({ expectedTotal: 1 })), { code: 'failed-precondition' });
+});
+
+test('catalog variants and add-ons are priced from current database records', async () => {
+  await env.withSecurityRulesDisabled(context => updateDoc(doc(context.firestore(), 'posWorkspaces/live/products/p1'), {
+    hasSizes: true, sizes: [{ name: 'Large', price: 40 }], hasAddons: true, addons: [{ name: 'Extra', price: 5 }]
+  }));
+  const saved = await invoke('checkout', checkoutData({ amountReceived: 90, items: [{ productId: 'p1', variant: 'Large', addons: ['Extra'], quantity: 2 }] }));
+  assert.equal(saved.total, 90);
+  assert.equal(saved.items[0].price, 45);
 });
 
 test('KNOWN BLOCKER: staff can read ledger fields hidden by the owner-only UI', async () => {
@@ -197,10 +235,10 @@ test('KNOWN BLOCKER: staff can read ledger fields hidden by the owner-only UI', 
   assert.equal(snapshot.data().accountTransactions[0].id, 'private-history');
 });
 
-test('KNOWN BLOCKER: refunding an account invoice does not reverse customer debt', async () => {
+test('account refunds remain denied until server reconciliation is available', async () => {
   await env.withSecurityRulesDisabled(context => updateDoc(doc(context.firestore(), 'posWorkspaces/live/config/settings'), { allowStaffRefunds: true }));
   const saved = await database.executeOrderTransaction('live', { order: order({ paymentMethod: 'Account' }), customerId: 'c1' });
-  await database.refundOrder('live', saved, { reason: 'Local audit fixture', recordedAt: new Date().toISOString(), cashierUid: 'staff-a', cashierName: 'Staff' });
+  await assert.rejects(database.refundOrder('live', saved, { reason: 'Local audit fixture', recordedAt: new Date().toISOString(), cashierUid: 'staff-a', cashierName: 'Staff' }));
   const customer = (await getDoc(doc(dbFor('staff-a'), 'posWorkspaces/live/customers/c1'))).data();
   assert.equal(customer.dueBalance, 125);
 });

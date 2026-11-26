@@ -286,25 +286,9 @@ export function AppProvider({ children, operator, signOut }) {
     });
   }
 
-  function addCustomCartItem(name, price, expectedRevision) {
-    if (operator.role !== 'staff') return false;
-    if (expectedRevision !== paymentRevision || (selectedTableId && !selectedTable)) {
-      showToast('The bill changed. Reopen Custom item to add it to the current bill.', 'error');
-      return false;
-    }
-
-    const cleanName = sanitizeText(name, 100);
-    if (!cleanName) {
-      showToast('Enter a dish name.', 'error');
-      return false;
-    }
-    if (!Number.isFinite(price) || price < 0 || roundMoney(price) !== price ||
-        !Number.isSafeInteger(Math.round(price * 100))) {
-      showToast('Enter a valid price with up to two decimal places.', 'error');
-      return false;
-    }
-
-    return addToCart({ id: `custom-${newId()}`, name: cleanName, category: 'Custom', price });
+  function addCustomCartItem() {
+    showToast('Custom items must first be saved in the catalog by the owner.', 'error');
+    return false;
   }
 
   function editItems(table, transform) {
@@ -442,7 +426,7 @@ export function AppProvider({ children, operator, signOut }) {
       return true;
     } catch (error) {
       reportError('checkout-failed', error);
-      showToast(error.code ? 'Bill was not saved. Keep the tender details and retry saving.' : error.message, 'error');
+      showToast(publicError(error, 'Bill was not saved. Keep the tender details and retry saving.'), 'error');
       return false;
     } finally {
       paymentLock.current = false;
