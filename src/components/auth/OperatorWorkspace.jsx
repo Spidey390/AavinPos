@@ -11,6 +11,7 @@ export default function OperatorWorkspace({ user, onSignOut }) {
 
   useEffect(() => {
     let unsub = () => {};
+    let verifiedOnce = false;
     const timeout = setTimeout(() => {
       setOperator(null);
       setError('Could not verify operator access. Check your connection and sign in again.');
@@ -19,10 +20,12 @@ export default function OperatorWorkspace({ user, onSignOut }) {
       unsub = onSnapshot(doc(firestore, 'operators', user.uid), { includeMetadataChanges: true }, snapshot => {
         // Do not authorize from a stale cached profile or an uncommitted write.
         if (snapshot.metadata.fromCache || snapshot.metadata.hasPendingWrites) {
-          setOperator(undefined);
+          setOperator(verifiedOnce ? null : undefined);
+          if (verifiedOnce) setError('Could not verify operator access. Check your connection and sign in again.');
           return;
         }
         clearTimeout(timeout);
+        verifiedOnce = true;
         setError('');
         setOperator(snapshot.exists() ? snapshot.data() : null);
       }, () => {
