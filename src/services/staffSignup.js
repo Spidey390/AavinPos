@@ -24,7 +24,7 @@ export async function getStaffAccountUid(email, password) {
         return (await signInWithEmailAndPassword(signup, email, password)).user.uid;
       } catch (retryError) {
         if (retryError.code === 'auth/network-request-failed') throw retryError;
-        throw new Error('This email already has an account. Check the password or use another email.');
+        throw new Error('This email already has an account. Check the password or use another email.', { cause: retryError });
       }
     }
   } finally {

@@ -37,10 +37,7 @@ service cloud.firestore {
       allow list: if owner();
       allow create: if (owner() && request.resource.data.role == 'staff' &&
         request.resource.data.keys().hasOnly(['role', 'active', 'name', 'email']) && request.resource.data.email is string &&
-        request.resource.data.active is bool && request.resource.data.name is string) ||
-        (request.auth != null && request.auth.uid == uid && request.auth.token.email != null &&
-         request.resource.data.role == 'owner' && request.resource.data.active == true &&
-         request.resource.data.keys().hasOnly(['role', 'active', 'name', 'email']));
+        request.resource.data.active is bool && request.resource.data.name is string);
       allow update: if owner() && resource.data.role == 'staff' && request.resource.data.role == 'staff' &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'active']) &&
         request.resource.data.active is bool && request.resource.data.name is string;

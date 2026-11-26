@@ -1,6 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
-import { onSnapshot, doc, getDoc, setDoc } from 'firebase/firestore';
-import { firestore } from '../services/firebase';
+import { onSnapshot } from 'firebase/firestore';
 import confetti from 'canvas-confetti';
 import { initialSettings, initialCategories } from '../data/initialData';
 import { playSound } from '../utils/audio';
@@ -114,23 +113,6 @@ export function AppProvider({ children, operator, signOut }) {
     let cleanup = () => {};
 
     async function bootstrapAndConnect() {
-      if (isOwner && operator?.uid) {
-        try {
-          const opRef = doc(firestore, 'operators', operator.uid);
-          const snap = await getDoc(opRef);
-          if (!snap.exists()) {
-            await setDoc(opRef, {
-              name: operator.name || 'Owner',
-              email: operator.email,
-              role: 'owner',
-              active: true
-            });
-          }
-        } catch (opErr) {
-          console.warn('Operator auto-bootstrap check:', opErr?.message || opErr);
-        }
-      }
-
       if (!running) return;
 
       cleanup = onSnapshot(workspaceRef, snapshot => {

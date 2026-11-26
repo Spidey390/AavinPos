@@ -1,5 +1,5 @@
 import React, { lazy, Suspense, useEffect, useState, useRef } from 'react';
-import { onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, connectAuthEmulator, getAuth } from 'firebase/auth';
+import { onAuthStateChanged, signInWithEmailAndPassword, signOut, connectAuthEmulator, getAuth } from 'firebase/auth';
 import { app, useEmulators } from '../../services/firebaseApp';
 import { sanitizeText } from '../../domain/sanitize';
 
@@ -89,15 +89,6 @@ function SignIn() {
       await signInWithEmailAndPassword(auth, email, password);
       failedAttempts.current = 0;
     } catch (failure) {
-      if (failure.code === 'auth/user-not-found' || failure.code === 'auth/invalid-credential') {
-        try {
-          await createUserWithEmailAndPassword(auth, email, password);
-          failedAttempts.current = 0;
-          return;
-        } catch (createErr) {
-          console.warn('Auto-create owner account skipped:', createErr?.code || createErr);
-        }
-      }
       failedAttempts.current += 1;
       if (failedAttempts.current >= 5) {
         setCooldown(30);
