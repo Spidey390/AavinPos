@@ -65,7 +65,7 @@ The app uses hash navigation. Unknown URL paths return the hosting 404 page. `/h
 
 ## Operating behavior
 
-- Checkout requires a connection and commits invoice sequencing and linked customer changes transactionally. Current credit limits are checked inside the transaction. Browser counter drafts survive refresh within the signed-in session and are cleared on sign-out. Shared-terminal authentication uses session storage.
+- Checkout requires a connection and commits invoice sequencing and linked customer changes transactionally. Current credit limits are checked inside the transaction. Browser counter drafts survive refresh within the signed-in session and are cleared on sign-out. The page reloads on sign-out to discard in-memory records, and financial views wait for server-confirmed snapshots. Shared-terminal authentication uses session storage.
 - UPI QR codes request payment; staff confirm actual receipt in the payment app or on the card terminal. There is no payment-provider webhook. Manual payments are operator assertions.
 - Full manual refunds default to disabled. **Account/credit refunds currently do not reverse customer debt.** Keep this feature disabled until the audited refund/ledger design is implemented.
 - Customer statement history currently retains only the latest 50 embedded entries. This is not a durable payment ledger. Full-collection subscriptions also require a pagination/aggregation plan before larger deployments.

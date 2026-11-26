@@ -91,13 +91,13 @@ function SignIn() {
       failedAttempts.current += 1;
       if (failedAttempts.current >= 5) {
         setCooldown(30);
-        setError('Too many failed attempts. Access rate-limited for 30 seconds.');
+        setError('Too many failed attempts. Wait 30 seconds before trying again.');
       } else {
         const errorMessages = {
           'auth/too-many-requests': 'Too many failed attempts. Access temporarily locked. Try again later.',
           'auth/user-disabled': 'This operator account has been disabled. Contact the owner.',
           'auth/network-request-failed': 'Could not reach Firebase. Check your connection and try again.',
-          'auth/configuration-not-found': 'Firebase Authentication is not enabled for project aavin-81398 yet. Enable Email/Password in Firebase Console (Authentication > Sign-in method).'
+          'auth/configuration-not-found': 'Authentication is unavailable for this POS. Contact the owner.'
         };
         setError(errorMessages[failure.code] || 'Sign-in failed. Check your email and password.');
       }
@@ -116,6 +116,8 @@ function SignIn() {
           const uid = user.uid;
           await signOut(auth);
           try { clearCounterDrafts(sessionStorage, uid); } catch { /* Storage may be disabled. */ }
+          // Drop the previous operator's in-memory Firestore records as well.
+          window.location.reload();
         }} />
       </Suspense>
     );
@@ -133,7 +135,7 @@ function SignIn() {
                 className="mt-1 w-full rounded-lg border border-slate-600 bg-[#121620] p-2 disabled:opacity-50" />
             </label>
             {error && <p role="alert" className="text-sm text-rose-300">{error}</p>}
-            {cooldown > 0 && <p className="text-xs text-amber-300">Rate limit active: retry in {cooldown}s</p>}
+            {cooldown > 0 && <p className="text-xs text-amber-300">Try again in {cooldown}s</p>}
             <button type="submit" disabled={pending || cooldown > 0}
               className="w-full rounded-lg bg-orange-700 p-2 font-semibold disabled:opacity-60">
               {pending ? 'Signing in…' : cooldown > 0 ? `Wait ${cooldown}s` : 'Sign in'}

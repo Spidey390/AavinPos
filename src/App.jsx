@@ -66,7 +66,7 @@ export default function App() {
         <main id="workspace" className={`flex-1 min-h-0 min-w-0 bg-[#0d1117] ${activeView === 'pos' ? 'overflow-hidden' : 'overflow-y-auto'}`}>
           {!isDbReady ? (
             <div className="app-gutters py-6 sm:py-8 text-sm max-w-2xl">
-              {dbStatus === 'loading' ? (
+              {dbStatus === 'loading' || dbStatus === 'ready' ? (
                 <p role="status" className="text-slate-300">Connecting to Firebase…</p>
               ) : dbStatus === 'setup-required' ? (
                 <p role="status" className="text-amber-300">The owner needs to sign in once to set up the workspace.</p>

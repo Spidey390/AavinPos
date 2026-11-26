@@ -33,6 +33,7 @@ The workspace had no `.git` directory. Git was initialized directly on `prod-har
 | MEDIUM | M11 | Raw provider messages reached toasts/logs, while production stripped all application logging. | `src/context/AppContext.jsx:207; vite.config.js:29` | Fixed: safe provider messages and structured event/code logs; production retains sanitized application error logging. Centralized monitoring remains an operational choice. | `src/services/errors.js:1` |
 | MEDIUM | M12 | Currency entry/restore validation allowed negative restored prices or prices that checkout cannot settle; staff passwords could exceed the login input limit. | `src/db/backup.js:11; src/components/menu/MenuCatalog.jsx:226; src/components/staff/StaffPermissions.jsx:26` | Fixed: negative prices rejected on restore, exact currency validated at entry, staff passwords bounded to the sign-in limit. Historical positive price precision is preserved on backup import. | `src/db/backup.js:10` |
 | MEDIUM | M13 | Bulk CSV imports write multiple independent batches and can partially apply after interruption. | `src/db/db.js:306` | OPEN workflow decision: define whole-import atomicity/idempotency and recovery before changing schema or import semantics. Owners should inspect partial imports before retrying. | `src/db/db.js:318` |
+| MEDIUM | M14 | Reports could expose empty totals before the first collection snapshot was received. | `src/context/AppContext.jsx:59` | Fixed: gate views/writes on each required collection and require server-confirmed snapshots; sign-out also discards in-memory records. | `src/context/AppContext.jsx:77` |
 | LOW | L01 | No static health endpoint, real path 404 or descriptive metadata. | `firebase.json:12; index.html:10` | Fixed: /health, hosting 404, description/robots/theme metadata; favicon retained. | `public/health.json:1` |
 | LOW | L02 | No lint script or database authorization regression tests. | `package.json:6; tests/domain.test.js:230` | Fixed: ESLint, isolated rules/real-transaction tests, secret scan and combined verify command. | `package.json:17` |
 | LOW | L03 | Several dependency major versions trail current releases. | `package.json:18` | Compatible updates applied; React 19, Vite 8, plugin-react 6 and Tailwind 4 migrations require a separate compatibility plan. npm audit reports zero vulnerabilities. | `package.json:19` |
@@ -92,7 +93,7 @@ Existing expense queries use automatic single-field indexes; no missing composit
 
 ## 8. Functionality
 
-Traced login → active operator → workspace/config → catalog/customer selection → bill/tender → invoice sequence + customer transaction → receipt → account payment → owner report. Automated tests use actual Firestore rules and production transaction functions, including concurrent credit-limit races and duplicate invoice retries. Counter drafts are validated before use and cleared on sign-out. Customer history recognizes current invoices and India dates. Role-incompatible customer controls are hidden, and failed imports retain retry context. A top-level error boundary handles lazy-load/render failures.
+Traced login → active operator → workspace/config → catalog/customer selection → bill/tender → invoice sequence + customer transaction → receipt → account payment → owner report. Automated tests use actual Firestore rules and production transaction functions, including concurrent credit-limit races and duplicate invoice retries. Counter drafts are validated before use and cleared on sign-out. Customer history recognizes current invoices and India dates. Role-incompatible customer controls are hidden, and failed imports retain retry context. A top-level error boundary handles lazy-load/render failures. Financial views and write actions wait for the first server-confirmed data snapshot, so initial empty caches cannot be exported as zero totals. Sign-out reloads the page to discard the previous operator’s in-memory Firestore data.
 
 Interactive browser smoke test used separate local demo ports 9199/8180 and app port 3001: staff sign-in, customer selection, Account checkout AP-1001, due balance 100 → 125, recording payment 25 → due 100, owner sign-in/reports, hostile `__proto__` category/staff/item names, and sign-out. Existing local services were left running. No production records were changed. Physical printer hardware, actual money transfer, payment-provider confirmation and cloud deployment were not tested.
 
@@ -113,11 +114,11 @@ HTTP checks against local production preview: `/` 200, `/health` 200 JSON with `
 ## Verification results
 
 - Every source fix batch ran dependency installation, lint, tests and a production build before committing. The final command is `npm run verify`.
-- Final suites: **24 unit/deployment tests + 18 Firestore tests = 42 passing tests**. **Three are diagnostics that intentionally demonstrate unresolved vulnerabilities**, leaving 39 ordinary regression/behavior checks. Green status does not override the NOT SAFE verdict.
+- Final suites: **24 unit/deployment tests + 19 Firestore tests = 43 passing tests**. **Three are diagnostics that intentionally demonstrate unresolved vulnerabilities**, leaving 40 ordinary regression/behavior checks. Green status does not override the NOT SAFE verdict.
 - `npm audit`: 0 reported vulnerabilities. No Python dependency tree exists, so pip-audit is not applicable.
 - Missing-configuration and production-emulator negative builds failed as expected.
 - Secret scan: no private credentials detected in the working tree (including ignored `.env` and `dist`) or all available commits. Earlier history did not exist in this workspace.
-- Real browser smoke flows and local HTTP behavior are described above. The latest compatible dependency updates also passed the actual transaction suites and production build; the interactive browser run preceded those compatible updates.
+- Real browser smoke flows and local HTTP behavior are described above. The latest compatible dependency updates also passed the actual transaction suites and production build; the interactive browser run preceded those compatible updates and the final recovery/readiness refinements; the new confirmed-data subscription has a real-emulator regression test.
 
 ## Manual auth / IDOR checks
 
@@ -169,8 +170,10 @@ d2a3367 fix(customers): align account forms with enforced operator permissions
 8684f9a chore(deps): update compatible packages and retain a clean audit
 4ba5c89 test(security): verify auth boundaries and document unresolved financial risks
 845c606 fix(validation): reject invalid currency and align credential entry limits
+2b25d43 docs: record production audit findings and deployment blockers
+87c1ce5 fix(auth): surface lost operator verification without restoring cached access
 ```
 
-This report and the updated README are recorded in a separate documentation commit; its final hash is listed in the chat response / `git log`.
+The complete list, including this final readiness follow-up, is available in the chat response / `git log`.
 
 **Final verdict: NOT SAFE TO DEPLOY.** Remaining release blockers are trusted invoice validation, owner-only ledger isolation and durable financial history. Account/Credit refund reconciliation must also be resolved before enabling manual refunds. Local verification cannot certify the uninspected live Firebase configuration or unavailable earlier Git history.

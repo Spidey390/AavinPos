@@ -237,3 +237,14 @@ test('real account payments work with a full rolling ledger and reject fractiona
   assert.equal(customer.accountTransactions[0].id, 'old-1');
   assert.throws(() => database.recordCustomerAccountPayment('live', 'c1', { amount: 1.001 }), /two decimal/);
 });
+
+test('data subscriptions wait for the server instead of emitting an empty initial cache', { timeout: 5000 }, async () => {
+  let stop;
+  try {
+    const rows = await new Promise((resolve, reject) => {
+      stop = database.watchRows('live', 'products', resolve, reject);
+    });
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].id, 'p1');
+  } finally { stop?.(); }
+});

@@ -41,12 +41,13 @@ function useRows(workspace, name, enabled, onError, attempt, recordedBy) {
     if (!workspace || !enabled) return;
     let active = true;
     const stop = watchRows(workspace, name, rows => {
-      if (active) setState({ workspace, rows });
+      if (active) setState({ workspace, rows, attempt });
     }, error => { if (active) onError(error); }, recordedBy);
     return () => { active = false; stop(); };
   }, [workspace, name, enabled, onError, attempt, recordedBy]);
 
-  return enabled && state?.workspace === workspace ? state.rows : emptyList;
+  const ready = state?.workspace === workspace && state?.attempt === attempt;
+  return [enabled && ready ? state.rows : emptyList, !enabled || ready];
 }
 
 export function AppProvider({ children, operator, signOut }) {
@@ -57,7 +58,7 @@ export function AppProvider({ children, operator, signOut }) {
   const [dbError, setDbError] = useState(null);
   const [bootAttempt, setBootAttempt] = useState(0);
   const settings = loadedConfig?.workspace === workspace ? loadedConfig.settings : initialSettings;
-  const isDbReady = dbStatus === 'ready' && loadedConfig?.workspace === workspace;
+  const configReady = dbStatus === 'ready' && loadedConfig?.workspace === workspace;
   const onReadError = React.useCallback(error => {
     reportError('database-read-failed', error);
     setDbStatus('unavailable');
@@ -67,12 +68,13 @@ export function AppProvider({ children, operator, signOut }) {
   const [activeModal, setActiveModal] = useState(null);
   const [modalData, setModalData] = useState(null);
   const readsOrders = ['orders', 'dashboard', 'reports', 'customers'].includes(activeView);
-  const tables = useRows(workspace, 'tables', !isOwner || ['tables', 'dashboard'].includes(activeView), onReadError, bootAttempt);
-  const products = useRows(workspace, 'products', !isOwner || ['menu', 'reports', 'dashboard'].includes(activeView), onReadError, bootAttempt);
-  const customers = useRows(workspace, 'customers', !isOwner || ['customers', 'dashboard'].includes(activeView), onReadError, bootAttempt);
-  const orderRows = useRows(workspace, 'orders', readsOrders, onReadError, bootAttempt);
+  const [tables, tablesReady] = useRows(workspace, 'tables', !isOwner || ['tables', 'dashboard'].includes(activeView), onReadError, bootAttempt);
+  const [products, productsReady] = useRows(workspace, 'products', !isOwner || ['menu', 'reports', 'dashboard'].includes(activeView), onReadError, bootAttempt);
+  const [customers, customersReady] = useRows(workspace, 'customers', !isOwner || ['customers', 'dashboard'].includes(activeView), onReadError, bootAttempt);
+  const [orderRows, ordersReady] = useRows(workspace, 'orders', readsOrders, onReadError, bootAttempt);
   const orders = React.useMemo(() => [...orderRows].sort((a, b) => b.createdAt.localeCompare(a.createdAt)), [orderRows]);
-  const expenses = useRows(workspace, 'expenses', (['expenses', 'dashboard'].includes(activeView) || (isOwner && activeView === 'reports')), onReadError, bootAttempt, isOwner ? undefined : operator.uid);
+  const [expenses, expensesReady] = useRows(workspace, 'expenses', (['expenses', 'dashboard'].includes(activeView) || (isOwner && activeView === 'reports')), onReadError, bootAttempt, isOwner ? undefined : operator.uid);
+  const isDbReady = configReady && tablesReady && productsReady && customersReady && ordersReady && expensesReady;
   const categories = React.useMemo(() => {
     const saved = mergeSavedCategories(settings.commonCategories || settings.categories);
     const fromProducts = products.map(p => p.category);

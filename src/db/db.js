@@ -32,7 +32,7 @@ const sequence = workspace => row(workspace, 'config', 'invoiceSequence');
 
 export function watchConfig(workspace, next, error) {
   return onSnapshot(config(workspace), { includeMetadataChanges: true }, snapshot => {
-    if (snapshot.metadata.hasPendingWrites) return;
+    if (snapshot.metadata.hasPendingWrites || snapshot.metadata.fromCache) return;
     if (!snapshot.exists()) {
       error(new Error('The active workspace has no settings.'));
       return;
@@ -45,7 +45,7 @@ export function watchRows(workspace, name, next, error, recordedBy) {
   const records = store(workspace, name);
   const source = recordedBy ? query(records, where('recordedBy', '==', recordedBy)) : records;
   return onSnapshot(source, { includeMetadataChanges: true }, snapshot => {
-    if (!snapshot.metadata.hasPendingWrites) next(snapshot.docs.map(item => ({ ...item.data(), id: item.id })));
+    if (!snapshot.metadata.hasPendingWrites && !snapshot.metadata.fromCache) next(snapshot.docs.map(item => ({ ...item.data(), id: item.id })));
   }, error);
 }
 
