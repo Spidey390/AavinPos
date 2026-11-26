@@ -9,7 +9,7 @@ import { newId } from '../../domain/ids';
 import { sanitizeText } from '../../domain/sanitize';
 import { addonKey, addonNameKey, mergeSavedAddons } from '../../domain/addons';
 import { categoryKey } from '../../domain/categories';
-import { parseMenuCsv } from '../../domain/csv';
+import { MAX_MENU_CSV_SIZE, parseMenuCsv } from '../../domain/csv';
 import { matchesProductSearch } from '../../domain/products';
 
 const dietaryOptions = [
@@ -90,9 +90,10 @@ export default function MenuCatalog() {
     }
     setIsImporting(true);
     try {
-      await importProducts(parsed);
-      setShowCsvModal(false);
-      setCsvText('');
+      if (await importProducts(parsed)) {
+        setShowCsvModal(false);
+        setCsvText('');
+      }
     } finally {
       setIsImporting(false);
     }
@@ -628,7 +629,13 @@ export default function MenuCatalog() {
                 onChange={(e) => {
                   const file = e.target.files?.[0];
                   if (!file) return;
+                  if (file.size > MAX_MENU_CSV_SIZE) {
+                    showToast('Choose a CSV file up to 2 MB with at most 5,000 products.', 'error');
+                    e.target.value = '';
+                    return;
+                  }
                   const reader = new FileReader();
+                  reader.onerror = () => showToast('Could not read this CSV file. Try again.', 'error');
                   reader.onload = (event) => {
                     const text = event.target?.result;
                     if (typeof text === 'string') setCsvText(text);
@@ -643,6 +650,7 @@ export default function MenuCatalog() {
               <label className="block text-xs font-semibold text-slate-300 mb-1.5">Or Paste CSV Text</label>
               <textarea
                 rows={8}
+                maxLength={MAX_MENU_CSV_SIZE}
                 value={csvText}
                 onChange={e => setCsvText(e.target.value)}
                 placeholder="Category,Item,Selling Price,Cost Price,Dietary Type&#10;Burger,Veg Burger,80,0,Pure Veg..."

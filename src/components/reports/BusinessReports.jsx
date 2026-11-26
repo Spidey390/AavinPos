@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { escapeCsv } from '../../domain/csv';
 import { Printer, Download, Utensils, Search } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { businessDate, dateRange as rangeFor, inRange } from '../../domain/dates';
@@ -123,14 +124,6 @@ export default function BusinessReports() {
   };
 
   const handleExportCSV = () => {
-    const escapeCsv = (str) => {
-      const s = String(str ?? '');
-      if (s.includes(',') || s.includes('"') || s.includes('\n')) {
-        return `"${s.replace(/"/g, '""')}"`;
-      }
-      return s;
-    };
-
     const periodStr = start === end ? start : `${start} to ${end}`;
     const sortedDishes = [...dishSales].sort((a, b) => b.units - a.units || b.revenue - a.revenue);
 
@@ -166,7 +159,7 @@ export default function BusinessReports() {
       )
     ];
 
-    const csvContent = "data:text/csv;charset=utf-8," + encodeURIComponent(lines.join('\n'));
+    const csvContent = URL.createObjectURL(new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' }));
     const link = document.createElement("a");
     link.setAttribute("href", csvContent);
     const filenameDate = start === end ? start : `${start}_to_${end}`;
@@ -174,6 +167,7 @@ export default function BusinessReports() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(csvContent), 1000);
     showToast('Report CSV exported');
   };
 

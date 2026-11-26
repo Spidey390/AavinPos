@@ -9,7 +9,7 @@ import { stores, validateBackup } from '../src/db/backup.js';
 import { sanitizeText, sanitizeNumber } from '../src/domain/sanitize.js';
 import { mergeSavedCategories, removeSavedCategory } from '../src/domain/categories.js';
 import { mergeSavedAddons, removeSavedAddon } from '../src/domain/addons.js';
-import { parseMenuCsv } from '../src/domain/csv.js';
+import { escapeCsv, MAX_MENU_CSV_SIZE, parseMenuCsv } from '../src/domain/csv.js';
 import { matchesProductSearch, getProductPrices, matchesPriceExpression } from '../src/domain/products.js';
 
 test('new bills total menu prices less the rounded discount', () => {
@@ -152,6 +152,22 @@ test('menu CSV parser extracts valid products and ignores invalid rows', () => {
   assert.equal(parsed[0].category, 'Burger');
   assert.equal(parsed[0].price, 80);
   assert.equal(parsed[1].name, 'French Fries');
+});
+
+test('CSV import handles quoted fields and rejects malformed prices and oversized input', () => {
+  const parsed = parseMenuCsv('Category,Item,Price,Cost\nDairy,"Milk, ""Premium""",25,10\nDairy,Bad,25xyz,0\nDairy,Bad2,1.001,0');
+  assert.equal(parsed.length, 1);
+  assert.equal(parsed[0].name, 'Milk, "Premium"');
+  assert.equal(parseMenuCsv('Dairy,"unclosed,25').length, 0);
+  assert.equal(parseMenuCsv('x'.repeat(MAX_MENU_CSV_SIZE + 1)).length, 0);
+  assert.equal(sanitizeNumber('25xyz', 0, 100, 0), 0);
+});
+
+test('CSV report cells neutralize formulas, including whitespace-prefixed formulas', () => {
+  for (const input of ['=HYPERLINK("https://example.test")', '+1', '-1', '@SUM(A1)', ' \t=1', '\r=1']) {
+    assert.ok(escapeCsv(input).replace(/^"/, '').startsWith("'"));
+  }
+  assert.equal(escapeCsv('Milk, "Premium"'), '"Milk, ""Premium"""');
 });
 
 test('product search matches by name, code, SKU, and exact or variant price', () => {

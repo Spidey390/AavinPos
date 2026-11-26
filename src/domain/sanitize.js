@@ -18,7 +18,7 @@ export function sanitizeText(value, maxLength = 255) {
 }
 
 export function sanitizeNumber(value, min = 0, max = Number.MAX_SAFE_INTEGER, fallback = 0) {
-  const num = typeof value === 'number' ? value : parseFloat(value);
+  const num = typeof value === 'number' ? value : (typeof value === 'string' && value.trim() ? Number(value) : NaN);
   if (!Number.isFinite(num)) return fallback;
   return Math.min(Math.max(num, min), max);
 }
