@@ -3,7 +3,7 @@ import {
   connectAuthEmulator, createUserWithEmailAndPassword, initializeAuth,
   inMemoryPersistence, signInWithEmailAndPassword
 } from 'firebase/auth';
-import { app, useEmulators } from './firebaseApp';
+import { app, useEmulators, emulatorPorts } from './firebaseApp';
 import { newId } from '../domain/ids';
 
 export async function getStaffAccountUid(email, password) {
@@ -12,7 +12,7 @@ export async function getStaffAccountUid(email, password) {
   const secondary = initializeApp(app.options, `staff-signup-${newId()}`);
   try {
     const signup = initializeAuth(secondary, { persistence: inMemoryPersistence });
-    if (useEmulators) connectAuthEmulator(signup, 'http://127.0.0.1:9099', { disableWarnings: true });
+    if (useEmulators) connectAuthEmulator(signup, `http://127.0.0.1:${emulatorPorts.auth}`, { disableWarnings: true });
 
     try {
       return (await createUserWithEmailAndPassword(signup, email, password)).user.uid;

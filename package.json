@@ -8,10 +8,10 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "npm run test:unit && npm run test:rules",
-    "deploy": "vite build && npx firebase-tools deploy --only hosting",
-    "deploy:all": "vite build && npx firebase-tools deploy",
+    "deploy": "npm run build && firebase deploy --only hosting,firestore:rules",
+    "deploy:all": "npm run build && firebase deploy --only hosting,firestore:rules",
     "lint": "eslint . --max-warnings=0",
-    "test:unit": "node --test tests/domain.test.js",
+    "test:unit": "node --test tests/domain.test.js tests/deployment.test.js",
     "test:rules": "node scripts/test-rules.js"
   },
   "dependencies": {
@@ -37,5 +37,8 @@
   },
   "overrides": {
     "@grpc/grpc-js": "^1.14.7"
+  },
+  "engines": {
+    "node": ">=24"
   }
 }
