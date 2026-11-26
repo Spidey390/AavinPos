@@ -189,6 +189,22 @@ test('KNOWN BLOCKER: scalar rules still trust arbitrary line-item totals', async
   assert.notEqual(forged.items[0].total, forged.subtotal);
 });
 
+test('KNOWN BLOCKER: staff can read ledger fields hidden by the owner-only UI', async () => {
+  await env.withSecurityRulesDisabled(context => updateDoc(doc(context.firestore(), 'posWorkspaces/live/customers/c1'), {
+    accountTransactions: [{ id: 'private-history', type: 'payment', amount: 100 }]
+  }));
+  const snapshot = await assertSucceeds(getDoc(doc(dbFor('staff-a'), 'posWorkspaces/live/customers/c1')));
+  assert.equal(snapshot.data().accountTransactions[0].id, 'private-history');
+});
+
+test('KNOWN BLOCKER: refunding an account invoice does not reverse customer debt', async () => {
+  await env.withSecurityRulesDisabled(context => updateDoc(doc(context.firestore(), 'posWorkspaces/live/config/settings'), { allowStaffRefunds: true }));
+  const saved = await database.executeOrderTransaction('live', { order: order({ paymentMethod: 'Account' }), customerId: 'c1' });
+  await database.refundOrder('live', saved, { reason: 'Local audit fixture', recordedAt: new Date().toISOString(), cashierUid: 'staff-a', cashierName: 'Staff' });
+  const customer = (await getDoc(doc(dbFor('staff-a'), 'posWorkspaces/live/customers/c1'))).data();
+  assert.equal(customer.dueBalance, 125);
+});
+
 test('real checkout transaction updates customer totals once and safely retries the same invoice', async () => {
   const saved = await database.executeOrderTransaction('live', { order: order(), customerId: 'c1' });
   assert.equal(saved.invoiceNo, 'AP-1001');
