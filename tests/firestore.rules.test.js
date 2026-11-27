@@ -9,6 +9,8 @@ import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { createHttpApp } from '../functions/src/http-app.js';
 import { createStaffService } from '../functions/src/staff.js';
+import { createAttendanceService } from '../functions/src/attendance.js';
+import { freePort } from './ports.js';
 import { localApiPlugin } from '../config/local-api.js';
 const requireFunctions = createRequire(new URL('../functions/package.json', import.meta.url));
 const { initializeApp: initializeAdminApp, deleteApp: deleteAdminApp } = requireFunctions('firebase-admin/app');
@@ -549,7 +551,7 @@ test('owner can read legacy sales and expenses before migration without cash gue
 });
 
 test('Vite bridge executes authenticated checkout against the emulator and retains the migration gate', async () => {
-  const vite = await createServer({ configFile: false, logLevel: 'silent', optimizeDeps: { noDiscovery: true, entries: [] }, server: { host: '127.0.0.1', port: 0, strictPort: true }, plugins: [localApiPlugin({ projectId, loadApi: options => createHttpApp({ handlers: callableModule, origins: options.origins, distPath: resolve('public') }) })] });
+  const vite = await createServer({ configFile: false, logLevel: 'silent', optimizeDeps: { noDiscovery: true, entries: [] }, server: { host: '127.0.0.1', port: await freePort(), strictPort: true }, plugins: [localApiPlugin({ projectId, loadApi: options => createHttpApp({ handlers: callableModule, origins: options.origins, distPath: resolve('public') }) })] });
   await vite.listen();
   try {
     const origin = `http://127.0.0.1:${vite.httpServer.address().port}`;
@@ -562,4 +564,94 @@ test('Vite bridge executes authenticated checkout against the emulator and retai
     assert.equal(blocked.status, 400); assert.equal((await blocked.json()).error.status, 'FAILED_PRECONDITION');
     assert.equal((await getAdminFirestore(adminApp).doc('posWorkspaces/live/orders/vite-blocked').get()).exists, false);
   } finally { await vite.close(); }
+});
+
+test('attendance records trusted session times, deduplicates retries and protects all attendance documents', async () => {
+  const admin = getAdminFirestore(adminApp);
+  let now = Date.parse('2026-11-27T09:00:00Z');
+  const attendance = createAttendanceService(admin, { clock: () => now });
+  const request = { auth: { uid: 'staff-a', token: { auth_time: Math.floor(now / 1000) - 3600 } }, data: {} };
+  await Promise.all([attendance.recordStaffLogin(request), attendance.recordStaffLogin(request)]);
+  now += 60000; await attendance.recordStaffLogin(request);
+  now += 60000; await attendance.recordStaffLogout(request);
+  await attendance.recordStaffLogout(request);
+  const records = await admin.collection('staffAttendanceDays/2026-11-27/sessions').get();
+  assert.equal(records.size, 1);
+  const record = records.docs[0];
+  assert.equal(record.data().startedAt, '2026-11-27T09:00:00.000Z');
+  assert.equal(record.data().logoutAt, '2026-11-27T09:02:00.000Z');
+  const report = await createStaffService(admin, { clock: () => now }).getStaffSummary({ auth: { uid: 'owner' }, data: { workspace: 'live', start: '2026-11-27', end: '2026-11-27' } });
+  assert.equal(report.staff.find(row => row.uid === 'staff-a').attendance.workingMs, 120000);
+  const session = (await admin.collection('operatorActivity/staff-a/sessions').get()).docs[0];
+  for (const path of [record.ref.path, session.ref.path]) {
+    await assertSucceeds(getDoc(doc(dbFor('owner'), path)));
+    for (const uid of ['staff-a', 'staff-b', 'disabled', 'stranger']) await assertFails(getDoc(doc(dbFor(uid), path)));
+    for (const uid of ['owner', 'staff-a', 'staff-b']) await assertFails(setDoc(doc(dbFor(uid), path), { uid: 'staff-b', workingMs: 999999999 }));
+  }
+  for (const method of ['recordStaffLogin', 'recordStaffLogout']) {
+    await assert.rejects(attendance[method]({ ...request, data: { uid: 'staff-b', logoutAt: 'forged' } }), { code: 'invalid-argument' });
+    await assert.rejects(attendance[method]({ data: {} }), { code: 'unauthenticated' });
+    await assert.rejects(attendance[method]({ auth: { uid: 'disabled', token: request.auth.token }, data: {} }), { code: 'permission-denied' });
+  }
+  await assert.rejects(attendance.recordStaffLogin(request), { code: 'failed-precondition' });
+});
+
+test('overnight attendance splits at India midnight and reports today separately from the selected day', async () => {
+  const admin = getAdminFirestore(adminApp);
+  let now = Date.parse('2026-11-26T18:29:30Z');
+  const attendance = createAttendanceService(admin, { clock: () => now });
+  const request = { auth: { uid: 'staff-a', token: { auth_time: Math.floor(now / 1000) } }, data: {} };
+  await attendance.recordStaffLogin(request);
+  now += 60000; await attendance.recordStaffLogin(request);
+  now += 60000; await attendance.recordStaffLogout(request);
+  const report = await createStaffService(admin, { clock: () => now }).getStaffSummary({ auth: { uid: 'owner' }, data: { workspace: 'live', start: '2026-11-26', end: '2026-11-26' } });
+  const row = report.staff.find(row => row.uid === 'staff-a');
+  assert.equal(row.attendance.workingMs, 30000);
+  assert.equal(row.attendance.today.workingMs, 90000);
+  assert.equal(row.attendance.days[0].sessions[0].status, 'continued');
+  assert.equal(row.attendance.days[0].sessions[0].logoutAt, null);
+});
+
+test('disconnected attendance stops at last contact and resumes as a new interval without counting the gap', async () => {
+  const admin = getAdminFirestore(adminApp);
+  let now = Date.parse('2026-11-27T09:00:00Z');
+  const attendance = createAttendanceService(admin, { clock: () => now });
+  const request = { auth: { uid: 'staff-a', token: { auth_time: Math.floor(now / 1000) } }, data: {} };
+  await attendance.recordStaffLogin(request);
+  now += 60000; await attendance.recordStaffLogin(request);
+  now += 10 * 60000; await attendance.recordStaffLogin(request);
+  now += 60000; await attendance.recordStaffLogout(request);
+  const report = await createStaffService(admin, { clock: () => now }).getStaffSummary({ auth: { uid: 'owner' }, data: { workspace: 'live', start: '2026-11-27', end: '2026-11-27' } });
+  const result = report.staff.find(row => row.uid === 'staff-a').attendance;
+  assert.equal(result.workingMs, 120000);
+  assert.equal(result.days[0].sessions.length, 2);
+  assert.equal(result.days[0].sessions[0].status, 'interrupted');
+  assert.equal(result.days[0].sessions[0].logoutAt, null);
+});
+
+test('simultaneous authenticated devices count once and one device cannot end another session', async () => {
+  const admin = getAdminFirestore(adminApp);
+  let now = Date.parse('2026-11-27T09:00:00Z');
+  const attendance = createAttendanceService(admin, { clock: () => now });
+  const request = authTime => ({ auth: { uid: 'staff-a', token: { auth_time: authTime } }, data: {} });
+  const first = request(Math.floor(now / 1000));
+  await attendance.recordStaffLogin(first);
+  now += 30000; const second = request(Math.floor(now / 1000)); await attendance.recordStaffLogin(second);
+  now += 30000; await attendance.recordStaffLogin(first);
+  now += 30000; await attendance.recordStaffLogin(second);
+  now += 30000; await attendance.recordStaffLogout(first);
+  now += 30000; await attendance.recordStaffLogout(second);
+  const report = await createStaffService(admin, { clock: () => now }).getStaffSummary({ auth: { uid: 'owner' }, data: { workspace: 'live', start: '2026-11-27', end: '2026-11-27' } });
+  assert.equal(report.staff.find(row => row.uid === 'staff-a').attendance.workingMs, 150000);
+});
+
+test('callable attendance logout verifies Auth, rejects forged times and cannot be used by anonymous callers', async () => {
+  const token = emulatorToken('staff-a');
+  const call = (name, data, authorized = true) => fetch(`${callableOrigin}/${name}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'http://localhost:3000', ...(authorized ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify({ data }) });
+  assert.equal((await call('recordStaffLogout', {}, false)).status, 401);
+  assert.equal((await call('recordStaffLogin', {})).status, 200);
+  assert.equal((await call('recordStaffLogout', { logoutAt: '2026-11-27T23:59:59Z', uid: 'staff-b' })).status, 400);
+  assert.equal((await call('recordStaffLogout', {})).status, 200);
+  assert.equal((await call('recordStaffLogout', {})).status, 200);
+  assert.equal((await call('recordStaffLogin', {})).status, 400);
 });

@@ -1,5 +1,6 @@
 import { HttpsError } from 'firebase-functions/v2/https';
 import { cents, id, object } from './financial.js';
+import { attendanceDates, createAttendanceService, summarizeAttendance } from './attendance.js';
 
 const fail = (code, message) => { throw new HttpsError(code, message); };
 const shopDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' });
@@ -15,7 +16,7 @@ export function reportPeriod(start, end) {
   return { start, end, from: from.toISOString(), until: until.toISOString(), nextDay: new Date(Date.parse(end) + 86400000).toISOString().slice(0, 10) };
 }
 
-export function summarizeStaff({ workspace, period, operators, activity, orders, refunds, expenses, payments, cutoverAt, cashState = 'ready' }) {
+export function summarizeStaff({ workspace, period, operators, activity, orders, refunds, expenses, payments, cutoverAt, cashState = 'ready', attendance = [], now = Date.now() }) {
   const profiles = new Map(operators.map(person => [person.uid, person]));
   const logins = new Map(activity.map(person => [person.uid, person]));
   const rows = new Map();
@@ -30,6 +31,7 @@ export function summarizeStaff({ workspace, period, operators, activity, orders,
     return rows.get(key);
   };
   for (const person of operators) if (person.role === 'staff') actor(person.uid, person.name);
+  for (const record of attendance) actor(record.uid, record.name);
   const within = value => { const date = day(value); return date && date >= period.start && date <= period.end; };
   const cashFor = (order, row) => {
     if (order.paymentMethod === 'Cash') return cents(order.total);
@@ -77,13 +79,14 @@ export function summarizeStaff({ workspace, period, operators, activity, orders,
   const staff = [...rows.values()].map(row => ({ ...row,
     totalSales: row.totalSales / 100, totalExpenses: row.totalExpenses / 100, cashReceived: cashReady ? row.cashReceived / 100 : null,
     cashRefunds: cashReady ? row.cashRefunds / 100 : null, cashExpenses: cashReady ? row.cashExpenses / 100 : null,
-    remaining: row.needsReview || !cashReady ? null : (row.cashReceived - row.cashRefunds - row.cashExpenses) / 100
+    remaining: row.needsReview || !cashReady ? null : (row.cashReceived - row.cashRefunds - row.cashExpenses) / 100,
+    attendance: summarizeAttendance(attendance.filter(record => record.uid === row.uid), period, now)
   })).sort((a, b) => b.totalSales - a.totalSales || a.name.localeCompare(b.name) || a.uid.localeCompare(b.uid));
-  return { period: { start: period.start, end: period.end }, generatedAt: new Date().toISOString(), staff, cashState,
+  return { period: { start: period.start, end: period.end }, generatedAt: new Date(now).toISOString(), staff, cashState,
     historyIncomplete: Boolean(cutoverAt && period.from < cutoverAt) };
 }
 
-export function createStaffService(db) {
+export function createStaffService(db, { clock = Date.now } = {}) {
   const reportRequests = new Map();
   async function operator(tx, request, roles) {
     if (!id(request.auth?.uid)) fail('unauthenticated', 'Sign in to continue.');
@@ -91,24 +94,12 @@ export function createStaffService(db) {
     if (!profile?.active || !roles.includes(profile.role)) fail('permission-denied', 'Operator access denied.');
     return { ...profile, uid: request.auth.uid };
   }
-  async function recordStaffLogin(request) {
-    object(request.data, []);
-    return db.runTransaction(async tx => {
-      const profile = await operator(tx, request, ['staff', 'owner']);
-      if (profile.role === 'owner') return { recorded: false };
-      const authTime = request.auth.token?.auth_time;
-      if (!Number.isSafeInteger(authTime) || authTime <= 0 || authTime > Date.now() / 1000 + 300) fail('unauthenticated', 'A verified sign-in timestamp is required.');
-      const ref = db.doc(`operatorActivity/${profile.uid}`), previous = (await tx.get(ref)).data();
-      if ((previous?.authTime ?? 0) >= authTime) return { recorded: true };
-      tx.set(ref, { authTime, lastLoginAt: new Date(authTime * 1000).toISOString(), name: label(profile.name, 'Staff'), email: profile.email ?? '', recordedAt: new Date().toISOString() });
-      return { recorded: true };
-    });
-  }
   async function getStaffSummary(request) {
     object(request.data, ['workspace', 'start', 'end']);
     const { workspace, start, end } = request.data;
     if (!id(workspace)) fail('invalid-argument', 'Invalid workspace.');
     const period = reportPeriod(start, end);
+    const now = clock();
     return db.runTransaction(async tx => {
       const profile = await operator(tx, request, ['owner']);
       if ((await tx.get(db.doc('posConfig/current'))).data()?.workspace !== workspace) fail('failed-precondition', 'The active workspace changed.');
@@ -138,8 +129,14 @@ export function createStaffService(db) {
       if (paymentSnapshot?.size > 10000) fail('failed-precondition', 'This report is too large. Choose a shorter date range.');
       const rows = snapshot => snapshot.docs.map(doc => ({ ...doc.data(), uid: doc.id, path: doc.ref.path }));
       const expenseRows = [...new Map([...rows(snapshots[4]), ...rows(snapshots[5])].map(expense => [expense.path, expense])).values()];
-      return summarizeStaff({ workspace, period, operators: rows(snapshots[0]), activity: rows(snapshots[1]), orders: rows(snapshots[2]), refunds: rows(snapshots[3]), expenses: expenseRows, payments: paymentSnapshot ? rows(paymentSnapshot) : [], cutoverAt: gate?.completedAt, cashState });
+      const attendance = [];
+      for (const date of attendanceDates(period, now)) {
+        const snapshot = await tx.get(db.collection(`staffAttendanceDays/${date}/sessions`).limit(10001 - attendance.length));
+        attendance.push(...snapshot.docs.map(doc => doc.data()));
+        if (attendance.length > 10000) fail('failed-precondition', 'This attendance report is too large. Choose a shorter date range.');
+      }
+      return summarizeStaff({ workspace, period, operators: rows(snapshots[0]), activity: rows(snapshots[1]), orders: rows(snapshots[2]), refunds: rows(snapshots[3]), expenses: expenseRows, payments: paymentSnapshot ? rows(paymentSnapshot) : [], cutoverAt: gate?.completedAt, cashState, attendance, now });
     }, { readOnly: true });
   }
-  return { recordStaffLogin, getStaffSummary };
+  return { ...createAttendanceService(db, { clock }), getStaffSummary };
 }

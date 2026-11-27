@@ -13,6 +13,19 @@ import { escapeCsv, MAX_MENU_CSV_SIZE, parseMenuCsv } from '../src/domain/csv.js
 import { matchesProductSearch, getProductPrices, matchesPriceExpression } from '../src/domain/products.js';
 import { parseCounterDrafts, clearCounterDrafts } from '../src/domain/drafts.js';
 import { publicError, reportError } from '../src/services/errors.js';
+import { finishStaffSession } from '../src/domain/staffSignOut.js';
+
+test('staff sign-out records attendance before clearing authentication and still works offline', async () => {
+  const events = [];
+  await finishStaffSession({ isOwner: false, recordLogout: async () => events.push('recorded'), signOut: async () => events.push('signed-out'), onRecordError: () => events.push('error') });
+  assert.deepEqual(events, ['recorded', 'signed-out']);
+  events.length = 0;
+  await finishStaffSession({ isOwner: false, recordLogout: async () => { throw new Error('offline'); }, signOut: async () => events.push('signed-out'), onRecordError: () => events.push('error') });
+  assert.deepEqual(events, ['error', 'signed-out']);
+  events.length = 0;
+  await finishStaffSession({ isOwner: true, recordLogout: async () => events.push('must-not-record'), signOut: async () => events.push('signed-out') });
+  assert.deepEqual(events, ['signed-out']);
+});
 
 test('new bills total menu prices less the rounded discount', () => {
   assert.deepEqual(calculateBill([{ price: 140, quantity: 2 }, { price: 260, quantity: 1 }], 10),

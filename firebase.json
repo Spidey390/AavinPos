@@ -66,6 +66,13 @@
         }
       },
       {
+        "source": "/api/recordStaffLogout",
+        "function": {
+          "functionId": "recordStaffLogout",
+          "region": "asia-south1"
+        }
+      },
+      {
         "source": "/api/getStaffSummary",
         "function": {
           "functionId": "getStaffSummary",

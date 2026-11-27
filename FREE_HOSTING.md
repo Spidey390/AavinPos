@@ -4,7 +4,7 @@ The selected free route runs one Node web service on Render. It serves the produ
 
 This is a **free preview/staging setup**, not an always-available production commitment. Render explicitly advises against using free instances for production: they sleep after 15 idle minutes, take about a minute to wake, and may be suspended when free allowances are exhausted. Firestore and Auth also have free-plan quotas. Keep the Render service on **Free**, use no paid database/disk/add-ons, and avoid adding a payment method if you require suspension rather than overage billing. See [Render free limits](https://render.com/docs/free) and [Firebase pricing](https://firebase.google.com/pricing).
 
-No Render account, service-account grant/key, credential upload, application deployment, rules publication, live backup or legacy-data migration was performed. The owner subsequently authorized discarding the test business data and publishing only the payment-history index.
+No Render account, service-account grant/key, credential upload, application deployment, live backup or legacy-data migration was performed. The owner subsequently authorized discarding the test business data, publishing the payment-history index and, with separate approval, publishing the reviewed Firestore security rules.
 
 ## 1. Verify the reviewed code locally
 
@@ -95,7 +95,7 @@ Review the existing customer balances, legacy refunds and missing older payment 
 
 ## 5. Publish rules and verify financial readiness
 
-Once backup/recovery and staging checks pass, publish the deny-direct-write rules. This remains a manual application cutover step:
+The reviewed deny-direct-write and owner-only attendance rules were published to `aavin-81398` after the owner's explicit approval on 27 November 2026. The released rules were checked against the tested file. For another project, or after reviewing a later rules change, publication remains an explicit administrator step:
 
 ```sh
 npm run deploy:rules -- --project aavin-81398
@@ -124,6 +124,6 @@ Confirm `posWorkspaces/<workspace>/config/financialMigration.status == ready` an
 
 ## 6. Acceptance and remaining production gates
 
-On staging, test owner-only staff sales/expense/cash summaries, verified login timestamps and staff report denial, real signed-in owner/staff access, forged/direct write denial, catalog checkout, current credit limits, payment retry after an uncertain response, private history, page 404, `/health`, TLS/headers, and reopening the app after the free server sleeps. Run physical printer and operator payment checks. Transactions and idempotency receipts persist in Firestore across service restarts; local Render files do not.
+On staging, test owner-only staff attendance/sales/expense/cash summaries, login/logout timestamps, today's and selected-day working hours, midnight/overlapping sessions, interrupted connections, offline sign-out and staff report denial. The approved attendance read/write rules are already published for `aavin-81398`; no new attendance index is required. Also test real signed-in owner/staff access, forged/direct write denial, catalog checkout, current credit limits, payment retry after an uncertain response, private history, page 404, `/health`, TLS/headers, and reopening the app after the free server sleeps. Run physical printer and operator payment checks. Transactions and idempotency receipts persist in Firestore across service restarts; local Render files do not.
 
 Keep both refund flags false. Switch terminals to the new Render URL only after reconciliation and acceptance. The free provider's sleep/suspension limits and recovery/uptime requirements remain production risks. **Verdict: ready for a free staging rehearsal; not certified safe for unattended live billing on the free service.**

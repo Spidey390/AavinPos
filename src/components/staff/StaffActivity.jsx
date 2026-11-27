@@ -9,9 +9,17 @@ export default function StaffActivity() {
   const { workspaceId, isOwner } = useApp();
   const [start, setStart] = useState(businessDate);
   const [end, setEnd] = useState(businessDate);
+  const [rangeMode, setRangeMode] = useState(false);
   const [period, setPeriod] = useState(() => ({ start: businessDate(), end: businessDate(), attempt: 0 }));
   const [state, setState] = useState(null);
   const key = JSON.stringify([workspaceId, period]);
+  useEffect(() => {
+    if (!isOwner || !workspaceId) return;
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible') setPeriod(previous => ({ ...previous, attempt: previous.attempt + 1 }));
+    }, 60000);
+    return () => clearInterval(timer);
+  }, [isOwner, workspaceId]);
   useEffect(() => {
     if (!isOwner || !workspaceId) return;
     let active = true;
@@ -21,7 +29,10 @@ export default function StaffActivity() {
     return () => { active = false; };
   }, [isOwner, workspaceId, key, period.start, period.end]);
   if (!isOwner) return null;
-  return <StaffActivityView start={start} end={end} onStartChange={setStart} onEndChange={setEnd}
+  return <StaffActivityView start={start} end={end} rangeMode={rangeMode}
+    onStartChange={value => { setStart(value); if (!rangeMode) setEnd(value); }} onEndChange={setEnd}
+    onRangeChange={() => { if (rangeMode) setEnd(start); setRangeMode(previous => !previous); }}
     loading={!state || state.key !== key} error={state?.key === key ? state.error : null} report={state?.key === key ? state.report : null}
-    onApply={event => { event.preventDefault(); setPeriod(previous => ({ start, end, attempt: previous.attempt + 1 })); }} />;
+    onApply={event => { event.preventDefault(); setPeriod(previous => ({ start, end, attempt: previous.attempt + 1 })); }}
+    onToday={() => { const today = businessDate(); setStart(today); setEnd(today); setRangeMode(false); setPeriod(previous => ({ start: today, end: today, attempt: previous.attempt + 1 })); }} />;
 }

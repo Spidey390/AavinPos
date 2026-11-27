@@ -11,6 +11,7 @@ import { sanitizeText } from '../domain/sanitize';
 import { newId } from '../domain/ids';
 import { canOpen, homeView } from '../domain/access';
 import { parseCounterDrafts } from '../domain/drafts';
+import { finishStaffSession } from '../domain/staffSignOut';
 import { publicError, reportError } from '../services/errors';
 import { callFinancial } from '../services/functions';
 import {
@@ -53,12 +54,13 @@ function useRows(workspace, name, enabled, onError, attempt, recordedBy, publicO
 
 export function AppProvider({ children, operator, signOut }) {
   const isOwner = operator.role === 'owner';
+  const signingOut = useRef(false);
   useEffect(() => {
     if (isOwner) return;
     let active = true, pending = false, retry;
     let attempts = 0;
     const register = async () => {
-      if (!active || pending) return;
+      if (!active || pending || signingOut.current) return;
       pending = true;
       try { await callFinancial('recordStaffLogin', {}); }
       catch (error) {
@@ -67,8 +69,11 @@ export function AppProvider({ children, operator, signOut }) {
       } finally { pending = false; }
     };
     register();
+    const heartbeat = setInterval(register, 60000);
+    const onVisible = () => { if (document.visibilityState === 'visible') register(); };
     window.addEventListener('online', register);
-    return () => { active = false; clearTimeout(retry); window.removeEventListener('online', register); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { active = false; clearTimeout(retry); clearInterval(heartbeat); window.removeEventListener('online', register); document.removeEventListener('visibilitychange', onVisible); };
   }, [isOwner, operator.uid]);
   const [workspace, setWorkspace] = useState(null);
   const [loadedConfig, setLoadedConfig] = useState(null);
@@ -202,6 +207,15 @@ export function AppProvider({ children, operator, signOut }) {
     clearTimeout(toastTimeout.current);
     setToast({ message, type });
     toastTimeout.current = setTimeout(() => setToast(null), 4000);
+  }
+
+  async function signOutWithAttendance() {
+    if (signingOut.current) return;
+    signingOut.current = true;
+    // Local sign-out must still work offline. Unconfirmed exits are reported as
+    // interrupted and counted only through the last server-verified contact.
+    try { await finishStaffSession({ isOwner, recordLogout: () => callFinancial('recordStaffLogout', {}, { timeout: 5000 }), signOut, onRecordError: error => reportError('staff-logout-record-failed', error) }); }
+    catch (error) { signingOut.current = false; reportError('sign-out-failed', error); showToast('Could not sign out. Try again.', 'error'); }
   }
 
   async function commit(action, message) {
@@ -496,7 +510,7 @@ export function AppProvider({ children, operator, signOut }) {
 
   return (
     <AppContext.Provider value={{
-      dbStatus, isDbReady, dbError, dbName: 'Cloud Firestore', operator, isOwner, signOut,
+      dbStatus, isDbReady, dbError, dbName: 'Cloud Firestore', operator, isOwner, signOut: signOutWithAttendance,
       retryDatabase: () => { setDbError(null); setDbStatus('loading'); setBootAttempt(attempt => attempt + 1); },
       workspaceId: workspace, settings, tables, products, customers, orders, expenses,
       categories,
