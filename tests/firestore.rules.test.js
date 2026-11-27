@@ -8,6 +8,7 @@ import { createServer as createHTTPServer } from 'node:http';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { createHttpApp } from '../functions/src/http-app.js';
+import { createStaffService } from '../functions/src/staff.js';
 const requireFunctions = createRequire(new URL('../functions/package.json', import.meta.url));
 const { initializeApp: initializeAdminApp, deleteApp: deleteAdminApp } = requireFunctions('firebase-admin/app');
 const { getFirestore: getAdminFirestore } = requireFunctions('firebase-admin/firestore');
@@ -473,12 +474,22 @@ test('callable HTTP envelopes verify emulator Auth tokens and reject unauthentic
   assert.equal(saved.status, 200);
   const body = await saved.json();
   assert.equal(body.result.total, 25);
+  assert.ok((await getAdminFirestore(adminApp).doc('operatorActivity/staff-a').get()).data()?.lastLoginAt);
   assert.equal(saved.headers.get('Access-Control-Allow-Origin'), 'http://localhost:3000');
   const payment = await call('recordPayment', { workspace: 'live', customerId: 'c1', idempotencyKey: 'http-payment', amount: 10, method: 'Cash' }, 'staff-a');
   assert.equal(payment.status, 200);
   assert.equal((await payment.json()).result.dueBalance, 90);
   const refund = await call('refund', { workspace: 'live', orderId: body.result.id, idempotencyKey: 'http-refund', reason: 'Disabled' }, 'staff-a');
   assert.equal(refund.status, 400);
+  const login = await call('recordStaffLogin', {}, 'staff-a');
+  assert.equal(login.status, 200);
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
+  const reportData = { workspace: 'live', start: today, end: today };
+  assert.equal((await call('getStaffSummary', reportData)).status, 401);
+  assert.equal((await call('getStaffSummary', reportData, 'staff-a')).status, 403);
+  const report = await call('getStaffSummary', reportData, 'owner');
+  assert.equal(report.status, 200);
+  assert.ok((await report.json()).result.staff.find(row => row.uid === 'staff-a').lastLoginAt);
 });
 
 
@@ -488,4 +499,34 @@ test('financial client writes are denied for every role, including inactive work
     'posWorkspaces/live/financialInvoices/forged', 'posWorkspaces/live/financialInvoices/forged/payments/forged',
     'posWorkspaces/live/financialInvoices/forged/refunds/forged', 'posWorkspaces/live/config/invoiceSequence'
   ]) await assertFails(setDoc(doc(dbFor(uid), path), { amount: 1 }));
+});
+
+test('staff login records use verified auth times and are owner-readable but never client-writable', async () => {
+  const admin = getAdminFirestore(adminApp), staff = createStaffService(admin);
+  const authTime = Math.floor(Date.now() / 1000);
+  const request = { auth: { uid: 'staff-a', token: { auth_time: authTime } }, data: {} };
+  await staff.recordStaffLogin(request);
+  await staff.recordStaffLogin({ ...request, auth: { uid: 'staff-a', token: { auth_time: authTime - 100 } } });
+  assert.equal((await admin.doc('operatorActivity/staff-a').get()).data().authTime, authTime);
+  await assert.rejects(staff.recordStaffLogin({ ...request, data: { uid: 'staff-b', lastLoginAt: 'forged' } }), { code: 'invalid-argument' });
+  await assert.rejects(staff.recordStaffLogin({ data: {} }), { code: 'unauthenticated' });
+  await assert.rejects(staff.recordStaffLogin({ auth: { uid: 'disabled', token: { auth_time: authTime } }, data: {} }), { code: 'permission-denied' });
+  await assertSucceeds(getDoc(doc(dbFor('owner'), 'operatorActivity/staff-a')));
+  for (const uid of ['staff-a', 'staff-b']) await assertFails(getDoc(doc(dbFor(uid), 'operatorActivity/staff-a')));
+  for (const uid of ['owner', 'staff-a']) await assertFails(setDoc(doc(dbFor(uid), 'operatorActivity/forged'), { authTime }));
+});
+
+test('owner staff reports scope private cash payments to the active workspace and deny staff access', async () => {
+  const admin = getAdminFirestore(adminApp), staff = createStaffService(admin);
+  const date = new Date().toISOString(), today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
+  await admin.doc('posWorkspaces/live/orders/staff-sale').set({ id: 'staff-sale', cashierUid: 'staff-a', total: 100, status: 'Completed', paymentMethod: 'Cash', amountReceived: 200, createdAt: date });
+  await admin.doc('posWorkspaces/live/expenses/staff-expense').set({ recordedBy: 'staff-a', amount: 15, paymentMethod: 'Cash', createdAt: date, date: today });
+  for (const workspace of ['live', 'archive']) await admin.doc(`posWorkspaces/${workspace}/customerAccounts/c1/payments/payment`).set({ type: 'payment', recordedBy: 'staff-a', method: 'Cash', amount: workspace === 'live' ? 25 : 999, date });
+  const data = { workspace: 'live', start: today, end: today };
+  await assert.rejects(staff.getStaffSummary({ auth: { uid: 'staff-a' }, data }), { code: 'permission-denied' });
+  await assert.rejects(staff.getStaffSummary({ auth: { uid: 'owner' }, data: { ...data, uid: 'staff-b' } }), { code: 'invalid-argument' });
+  await assert.rejects(staff.getStaffSummary({ auth: { uid: 'owner' }, data: { ...data, workspace: 'archive' } }), { code: 'failed-precondition' });
+  const report = await staff.getStaffSummary({ auth: { uid: 'owner' }, data });
+  const row = report.staff.find(row => row.uid === 'staff-a');
+  assert.equal(row.totalSales, 100); assert.equal(row.cashReceived, 125); assert.equal(row.totalExpenses, 15); assert.equal(row.remaining, 110);
 });

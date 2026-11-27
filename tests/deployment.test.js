@@ -23,7 +23,9 @@ test('hosting and preview share strict headers and route the complete callable A
   assert.doesNotMatch(policy, /localhost|127\.0\.0\.1|https:\/\/\*/);
   assert.match(policy, /frame-ancestors 'none'/);
   assert.deepEqual(firebase.hosting.rewrites.filter(route => !route.function), [{ source: '/health', destination: '/health.json' }]);
-  const callables = ['checkout', 'initializeWorkspace', 'saveCustomer', 'archiveCustomer', 'recordPayment', 'refund'];
+  const callables = ['checkout', 'initializeWorkspace', 'saveCustomer', 'archiveCustomer', 'recordPayment', 'refund', 'recordStaffLogin', 'getStaffSummary'];
   assert.deepEqual(firebase.hosting.rewrites.filter(route => route.function), callables.map(functionId => ({ source: `/api/${functionId}`, function: { functionId, region: 'asia-south1' } })));
+  const indexes = JSON.parse(await readFile(firebase.firestore.indexes, 'utf8'));
+  assert.ok(indexes.fieldOverrides.some(field => field.collectionGroup === 'payments' && field.fieldPath === 'date' && field.indexes.some(index => index.queryScope === 'COLLECTION_GROUP' && index.order === 'ASCENDING')));
   assert.equal(JSON.parse(await readFile('public/health.json', 'utf8')).status, 'ok');
 });

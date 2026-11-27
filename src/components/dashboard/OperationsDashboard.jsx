@@ -154,9 +154,12 @@ export default function OperationsDashboard() {
       <header className="flex flex-wrap items-center justify-between gap-2.5">
         <h1 className="text-xl font-extrabold text-white">{isOwner ? 'Dashboard' : 'Staff Dashboard'}</h1>
         {isOwner && (
-          <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-emerald-500/25 bg-emerald-500/10 px-2 py-1 text-xs font-semibold text-emerald-300">
-            <span className="size-1.5 rounded-full bg-emerald-400" aria-hidden="true" /> Live
-          </span>
+          <div className="flex flex-wrap items-center gap-3">
+            <button type="button" onClick={() => setActiveView('staff')} className="min-h-11 rounded-lg border border-slate-600 px-3 py-2 text-sm font-semibold text-slate-100 hover:border-orange-500/60 hover:bg-slate-800">Staff activity</button>
+            <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-emerald-500/25 bg-emerald-500/10 px-2 py-1 text-xs font-semibold text-emerald-300">
+              <span className="size-1.5 rounded-full bg-emerald-400" aria-hidden="true" /> Live
+            </span>
+          </div>
         )}
       </header>
 

@@ -1,6 +1,7 @@
 {
   "firestore": {
-    "rules": "firestore.rules"
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
   },
   "hosting": {
     "public": "dist",
@@ -54,6 +55,20 @@
         "source": "/api/refund",
         "function": {
           "functionId": "refund",
+          "region": "asia-south1"
+        }
+      },
+      {
+        "source": "/api/recordStaffLogin",
+        "function": {
+          "functionId": "recordStaffLogin",
+          "region": "asia-south1"
+        }
+      },
+      {
+        "source": "/api/getStaffSummary",
+        "function": {
+          "functionId": "getStaffSummary",
           "region": "asia-south1"
         }
       }

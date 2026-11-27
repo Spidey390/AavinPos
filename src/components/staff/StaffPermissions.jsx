@@ -5,6 +5,7 @@ import { useApp } from '../../context/AppContext';
 import { getStaffAccountUid } from '../../services/staffSignup';
 import { sanitizeText } from '../../domain/sanitize';
 import { publicError } from '../../services/errors';
+import StaffActivity from './StaffActivity';
 
 export default function StaffPermissions() {
   const { showToast } = useApp();
@@ -94,11 +95,12 @@ export default function StaffPermissions() {
   }
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6 app-gutters py-4 sm:py-6">
+    <div className="mx-auto max-w-6xl space-y-6 app-gutters py-4 sm:py-6">
       <div>
-        <h1 className="text-xl font-bold">Staff access</h1>
+        <h1 className="text-xl font-bold">Staff activity & access</h1>
         <p className="mt-1 text-sm text-slate-300">Staff can bill, manage table orders, view order history, and record expenses.</p>
       </div>
+      <StaffActivity />
       <form onSubmit={addStaff} className="space-y-4 rounded-xl border border-slate-700 bg-[#171c26] p-4">
         <h2 className="font-bold">Add staff account</h2>
         <p className="text-sm text-slate-300">Staff can sign in with the email and password you set here.</p>

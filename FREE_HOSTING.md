@@ -89,10 +89,10 @@ Review the existing customer balances, legacy refunds and missing older payment 
 
 ## 5. Publish rules and migrate only during the reviewed cutover
 
-Once backup/recovery and staging checks pass, publish the same deny-direct-write rules:
+Once backup/recovery and staging checks pass, publish the deny-direct-write rules and the staff report payment-date index:
 
 ```sh
-npm run deploy:rules -- --project aavin-81398
+npm run deploy:firestore -- --project aavin-81398
 ```
 
 Generate the read-only migration plan for the active workspace (confirmed at the last readiness check as `204d5dcc4202630c4f0bdbb6604771d7`; recheck `posConfig/current.workspace` before running):
@@ -112,10 +112,10 @@ node functions/scripts/migrate-payments.js --project aavin-81398 \
   --ack-backup --confirm-project aavin-81398
 ```
 
-Confirm `posWorkspaces/<workspace>/config/financialMigration.status == ready`, then manually deploy the reviewed Render service. No Firebase Functions or Firebase Hosting deploy is needed for this route.
+Confirm `posWorkspaces/<workspace>/config/financialMigration.status == ready` and that Firestore indexes have finished building, then manually deploy the reviewed Render service. No Firebase Functions or Firebase Hosting deploy is needed for this route.
 
 ## 6. Acceptance and remaining production gates
 
-On staging, test real signed-in owner/staff access, forged/direct write denial, catalog checkout, current credit limits, payment retry after an uncertain response, private history, page 404, `/health`, TLS/headers, and reopening the app after the free server sleeps. Run physical printer and operator payment checks. Transactions and idempotency receipts persist in Firestore across service restarts; local Render files do not.
+On staging, test owner-only staff sales/expense/cash summaries, verified login timestamps and staff report denial, real signed-in owner/staff access, forged/direct write denial, catalog checkout, current credit limits, payment retry after an uncertain response, private history, page 404, `/health`, TLS/headers, and reopening the app after the free server sleeps. Run physical printer and operator payment checks. Transactions and idempotency receipts persist in Firestore across service restarts; local Render files do not.
 
 Keep both refund flags false. Switch terminals to the new Render URL only after reconciliation and acceptance. The free provider's sleep/suspension limits and recovery/uptime requirements remain production risks. **Verdict: ready for a free staging rehearsal; not certified safe for unattended live billing on the free service.**

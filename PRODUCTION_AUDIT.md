@@ -14,6 +14,14 @@ A Spark-compatible administrator snapshot CLI reads typed Firestore REST documen
 
 **Free hosting limitation:** [Render's free service documentation](https://render.com/docs/free) explicitly recommends these instances for previews rather than production. Sleep, wake-up delay, quotas and possible suspension are remaining live-billing availability risks. The code is ready for a free staging rehearsal; the production verdict remains NOT SAFE until migration/recovery, real staging acceptance and availability requirements are resolved. No paid plan was activated.
 
+## Owner staff activity follow-up
+
+The owner now has a staff activity section with a date range, completed gross sales, bill count, latest sign-in time, total expenses and cash remaining. Cash remaining follows the approved definition: cash invoice/account collections minus cash refunds and cash expenses. It excludes card/UPI/unpaid credit, opening float and unrecorded cash handovers; expenses and refund cash follow the recorded operator UID. Legacy uncertainty is surfaced rather than presented as an accurate zero.
+
+`recordStaffLogin` derives its timestamp/UID from verified Firebase Auth claims, ignores duplicate/older sessions and stores owner-readable, client-write-denied `operatorActivity` documents. Authenticated financial calls also register the verified sign-in. `getStaffSummary` rechecks the active owner/workspace and migration readiness, limits date ranges to 31 days, projects only required fields and fails rather than truncating oversized data. A payments date collection-group index is provided in `firestore.indexes.json`; it must be published and ready. No index/rule publication or deployment was performed.
+
+Tests cover India date boundaries, split tenders, cash change, account collections, cross-operator refunds, same-name staff, negative balances, ambiguous legacy cash, login spoofing/replay, private reads, active-workspace scoping and real callable HTTP owner/staff access. Local validation passes 72 tests under Node 24, lint, both builds, both dependency audits (zero reported vulnerabilities) and credential scanning. The report UI was checked with isolated fixture data for populated, loading, empty and error states, refresh behavior and mobile width. No real staff credentials or production finance records were used in browser testing.
+
 ## Updated before / after table
 
 | Blocker | Severity | Before | Current result | Source |

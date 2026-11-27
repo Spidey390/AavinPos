@@ -11,3 +11,5 @@ export const saveCustomer = handlers.saveCustomer;
 export const archiveCustomer = handlers.archiveCustomer;
 export const recordPayment = handlers.recordPayment;
 export const refund = handlers.refund;
+export const recordStaffLogin = handlers.recordStaffLogin;
+export const getStaffSummary = handlers.getStaffSummary;

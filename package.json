@@ -18,7 +18,8 @@
     "build:functions": "npm --prefix functions run build",
     "test:functions": "npm --prefix functions test",
     "start": "node --env-file-if-exists=server.env functions/src/server.js",
-    "deploy:rules": "firebase deploy --only firestore:rules"
+    "deploy:rules": "firebase deploy --only firestore:rules",
+    "deploy:firestore": "firebase deploy --only firestore:rules,firestore:indexes"
   },
   "dependencies": {
     "canvas-confetti": "^1.9.4",

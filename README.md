@@ -37,6 +37,14 @@ VITE_USE_FIREBASE_EMULATORS=true npm run dev
 
 Emulator ports default to Auth 9099, Firestore 8080 and Functions 5001 on loopback. Matching optional `VITE_FIREBASE_*_EMULATOR_PORT` overrides support isolated local instances. The dedicated test runner chooses its own Firestore port. Production builds reject emulator mode.
 
+## Owner staff activity
+
+Open **Staff & Roles**, or choose **Staff activity** on the owner dashboard. Select an inclusive date range of up to 31 days (India time) and Apply / Refresh. Each staff UID has completed gross sales, bill count, latest recorded login, total expenses, cash received, cash refunds, cash expenses and cash remaining. Staff with the same display name remain separate, disabled staff remain visible, and available historical actor names are preserved.
+
+Cash remaining is cash invoice receipts after change plus cash account-payment collections, minus cash refunds and cash expenses recorded by that staff member. Split payments contribute only their cash portion; UPI/card and unpaid Account/Credit sales do not count as cash. Refund cash is attributed to the operator who recorded the refund. Opening float, owner-handled cash and cash handovers are outside this per-staff figure. Missing legacy actor/tender details show Needs review; pre-cutover periods carry an incomplete-history warning.
+
+The owner-only API reads database records and uses bounded date queries/projections rather than trusting client totals. Last login comes from the verified Firebase token's sign-in time, recorded idempotently by the backend on sign-in and authenticated financial calls. It is not an online-status or working-duration tracker. Staff cannot read the report/login collection or write login timestamps directly. Publish the updated rules **and indexes** with `npm run deploy:firestore -- --project PROJECT_ID`; the payments date collection-group index must finish building before the report can load. No rules/indexes were published here.
+
 ## Free hosting and migration
 
 Follow [FREE_HOSTING.md](FREE_HOSTING.md). The `render.yaml` Blueprint selects the Free plan, Node 24, Singapore, `/health`, and manual future deployments. Both browser and API use the Render origin; there is no need to change Firebase to Blaze or deploy Cloud Functions. A dedicated administrator-approved service-account Secret File is required. Its key never belongs in browser variables or the repository.

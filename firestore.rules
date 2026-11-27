@@ -36,6 +36,10 @@ service cloud.firestore {
       allow read: if owner();
       allow write: if false;
     }
+    match /operatorActivity/{uid} {
+      allow read: if owner();
+      allow write: if false;
+    }
     match /operators/{uid} {
       allow get: if request.auth != null && (request.auth.uid == uid || owner());
       allow list: if owner();

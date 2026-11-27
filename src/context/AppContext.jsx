@@ -12,6 +12,7 @@ import { newId } from '../domain/ids';
 import { canOpen, homeView } from '../domain/access';
 import { parseCounterDrafts } from '../domain/drafts';
 import { publicError, reportError } from '../services/errors';
+import { callFinancial } from '../services/functions';
 import {
   workspaceRef, initializeWorkspace, watchConfig, watchRows, executeOrderTransaction, saveTableDraft, draftRevision,
   deleteTable, createTable, updateSettings, syncPublicBrand, createExpense, deleteRecord,
@@ -52,6 +53,23 @@ function useRows(workspace, name, enabled, onError, attempt, recordedBy, publicO
 
 export function AppProvider({ children, operator, signOut }) {
   const isOwner = operator.role === 'owner';
+  useEffect(() => {
+    if (isOwner) return;
+    let active = true, pending = false, retry;
+    let attempts = 0;
+    const register = async () => {
+      if (!active || pending) return;
+      pending = true;
+      try { await callFinancial('recordStaffLogin', {}); }
+      catch (error) {
+        reportError('staff-login-record-failed', error);
+        if (active && attempts++ < 3) retry = setTimeout(register, attempts * 10000);
+      } finally { pending = false; }
+    };
+    register();
+    window.addEventListener('online', register);
+    return () => { active = false; clearTimeout(retry); window.removeEventListener('online', register); };
+  }, [isOwner, operator.uid]);
   const [workspace, setWorkspace] = useState(null);
   const [loadedConfig, setLoadedConfig] = useState(null);
   const [dbStatus, setDbStatus] = useState('loading');
