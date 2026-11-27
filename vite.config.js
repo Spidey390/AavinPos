@@ -3,14 +3,16 @@ import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import { resolveFirebaseConfig } from './src/domain/firebaseConfig.js';
 import { securityHeaders } from './config/security.js';
+import { localApiPlugin } from './config/local-api.js';
 
 export default defineConfig(({ command, mode, isPreview }) => {
   const development = command === 'serve' && !isPreview && mode !== 'production';
-  const firebase = resolveFirebaseConfig(loadEnv(mode, process.cwd(), 'VITE_'), development);
+  const environment = loadEnv(mode, process.cwd(), 'VITE_');
+  const firebase = resolveFirebaseConfig(environment, development);
   const headers = securityHeaders(development);
   return {
   appType: 'mpa',
-  plugins: [react(), {
+  plugins: [react(), localApiPlugin({ projectId: firebase.projectId, useEmulators: development && environment.VITE_USE_FIREBASE_EMULATORS === 'true' }), {
     name: 'hosting-health-and-404',
     generateBundle() { this.emitFile({ type: 'asset', fileName: 'build-info.json', source: JSON.stringify({ projectId: firebase.projectId, emulators: development }) }); },
     configurePreviewServer(server) {
@@ -34,6 +36,9 @@ export default defineConfig(({ command, mode, isPreview }) => {
     port: 3000,
     open: false,
     cors: false,
+    fs: {
+      deny: ['.env', '.env.*', '*.{crt,pem}', '**/.git/**', '**/server.env', '**/.migration-reports/**', '**/firebase-service-account*.json']
+    },
     headers
   },
   preview: {

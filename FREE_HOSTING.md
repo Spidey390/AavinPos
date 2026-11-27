@@ -16,6 +16,10 @@ npm run verify
 
 Root/standalone tooling runs on Node 24. The optional Firebase Functions target retains its Node 22 runtime. `npm start` runs the standalone host on loopback; it needs a production build and the matching project in `server.env` (copy `server.env.example`). Hosting health is `/health`. Do not start the migration until the backup/reconciliation review below.
 
+For local development, `npm run dev` now mounts the same authenticated API alongside Vite. `npm run build` followed by `npm run preview` also includes that API. Both use local administrator ADC credentials and exact loopback origins for the actual port, including Vite's fallback ports. Set public Firebase web values in `.env`; an optional ignored `server.env` supplies server-only settings. `POS_PROJECT_ID`, if present, must match the browser project. Restart dev/preview after backend JavaScript or credential changes. Local operation needs no Render service or Blaze upgrade. API calls require sign-in; HTTP 401 for an anonymous call confirms the route exists.
+
+Before migration, the owner can inspect recorded sales, expenses and login times. Cash totals show **Setup required** until the reviewed migration and payment-history index are ready. Checkout/payment recording remain blocked by the migration gate. On the November 27 read-only readiness check, project `aavin-81398` had no initialized financial migration; this check changed no database records.
+
 ## 2. Prepare a separate backend identity
 
 A trusted project administrator must create a dedicated service account for the hosted backend, with **Cloud Datastore User** (`roles/datastore.user`) on the intended project. Do not use an Owner/Editor account or the developer's personal ADC credential file on Render. Firebase ID tokens are verified by the shared callable SDK, and the service rechecks the active operator in Firestore for every mutation.

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { reportPeriod, summarizeStaff } from '../src/staff.js';
+import { createStaffService, reportPeriod, summarizeStaff } from '../src/staff.js';
 
 const now = '2026-11-27T09:00:00.000Z';
 const sale = (cashierUid, total, paymentMethod, extra = {}) => ({ cashierUid, cashierName: 'Same name', total, paymentMethod, status: 'Completed', createdAt: now, ...extra });
@@ -29,4 +29,32 @@ test('staff report date ranges reject invalid or oversized periods and use inclu
   assert.equal(reportPeriod('2026-11-27', '2026-11-27').from, '2026-11-26T18:30:00.000Z');
   assert.equal(reportPeriod('2026-11-27', '2026-11-27').until, '2026-11-27T18:30:00.000Z');
   for (const pair of [['2026-02-30', '2026-03-01'], ['2026-11-28', '2026-11-27'], ['2026-01-01', '2026-02-01'], ['', '2026-11-27']]) assert.throws(() => reportPeriod(...pair));
+});
+
+test('staff partial reports expose recorded totals but never invent cash balances before setup', () => {
+  for (const cashState of ['migration-required', 'index-required']) {
+    const report = summarizeStaff({ ...data(), cashState, orders: [sale('a', 100, 'Cash')], expenses: [{ recordedBy: 'a', amount: 15, paymentMethod: 'Cash', createdAt: now }] });
+    const row = report.staff.find(row => row.uid === 'a');
+    assert.equal(report.cashState, cashState); assert.equal(row.totalSales, 100); assert.equal(row.totalExpenses, 15);
+    assert.equal(row.remaining, null); assert.equal(row.cashReceived, null); assert.equal(row.cashRefunds, null); assert.equal(row.cashExpenses, null);
+  }
+});
+
+test('missing payment index produces a read-only partial owner report with actionable readiness', async () => {
+  const empty = { size: 0, docs: [] };
+  const query = kind => ({ kind, where() { return this; }, limit() { return this; }, select() { return this; } });
+  const db = { doc: path => ({ path }), collection: path => query(path), collectionGroup: name => query(`group:${name}`),
+    runTransaction: async (callback, options) => {
+      assert.equal(options.readOnly, true);
+      return callback({ get: async ref => {
+        if (ref.path === 'operators/owner') return { data: () => ({ active: true, role: 'owner' }) };
+        if (ref.path === 'posConfig/current') return { data: () => ({ workspace: 'live' }) };
+        if (ref.path?.endsWith('/config/financialMigration')) return { data: () => ({ status: 'ready' }) };
+        if (ref.kind === 'group:payments') throw Object.assign(new Error('The query requires an index.'), { code: 9 });
+        return empty;
+      }, set() { throw new Error('Reports must not write database records.'); } });
+    }
+  };
+  const report = await createStaffService(db).getStaffSummary({ auth: { uid: 'owner' }, data: { workspace: 'live', start: '2026-11-27', end: '2026-11-27' } });
+  assert.equal(report.cashState, 'index-required');
 });

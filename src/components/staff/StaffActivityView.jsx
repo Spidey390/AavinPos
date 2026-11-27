@@ -3,6 +3,7 @@ import React from 'react';
 const money = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 });
 const loginFormat = new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true });
 const loginTime = value => value && Number.isFinite(Date.parse(value)) ? loginFormat.format(new Date(value)) : 'Not recorded yet';
+const amount = value => typeof value === 'number' && Number.isFinite(value) ? money.format(value) : '—';
 
 export default function StaffActivityView({ report, loading, error, start, end, onStartChange, onEndChange, onApply }) {
   return (
@@ -33,7 +34,9 @@ export default function StaffActivityView({ report, loading, error, start, end, 
             <span>{report.period.start} to {report.period.end} · India time</span>
             <span>Updated {loginTime(report.generatedAt)}</span>
           </div>
-          {report.historyIncomplete && <p role="status" className="rounded-lg border border-amber-700/60 bg-amber-950/20 p-3 text-sm text-amber-200">This period includes pre-migration history. Older customer payments may be incomplete; reconcile the report with your records.</p>}
+          {report.cashState === 'migration-required' && <p role="status" className="rounded-lg border border-amber-700/60 bg-amber-950/20 p-3 text-sm text-amber-200">Sales, expenses and recorded login times are available. Cash balances and billing require the reviewed financial migration before they can be used.</p>}
+          {report.cashState === 'index-required' && <p role="status" className="rounded-lg border border-amber-700/60 bg-amber-950/20 p-3 text-sm text-amber-200">Sales, expenses and recorded login times are available. Cash reporting is waiting for the payment-history index. Publish the report indexes, wait for them to finish building, then refresh.</p>}
+          {report.historyIncomplete && (!report.cashState || report.cashState === 'ready') && <p role="status" className="rounded-lg border border-amber-700/60 bg-amber-950/20 p-3 text-sm text-amber-200">This period includes pre-migration history. Older customer payments may be incomplete; reconcile the report with your records.</p>}
           {report.staff.length === 0 ? <p className="py-6 text-center text-sm text-slate-400">No staff accounts or staff activity found for this period.</p> : (
             <div className="grid gap-3 xl:grid-cols-2">
               {report.staff.map(person => (
@@ -49,10 +52,10 @@ export default function StaffActivityView({ report, loading, error, start, end, 
                   <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-4">
                     <div><dt className="text-xs text-slate-400">Total sales</dt><dd className="mt-1 break-words text-lg font-semibold tabular-nums text-white">{money.format(person.totalSales)}</dd></div>
                     <div><dt className="text-xs text-slate-400">Total expenses</dt><dd className="mt-1 break-words text-lg font-semibold tabular-nums text-rose-300">{money.format(person.totalExpenses)}</dd></div>
-                    <div><dt className="text-xs text-slate-400">Cash received</dt><dd className="mt-1 break-words text-lg font-semibold tabular-nums text-white">{money.format(person.cashReceived)}</dd></div>
-                    <div><dt className="text-xs text-slate-400">Cash remaining</dt><dd className={`mt-1 break-words text-lg font-bold tabular-nums ${person.remaining < 0 || person.needsReview ? 'text-amber-300' : 'text-emerald-300'}`}>{person.remaining == null ? 'Needs review' : money.format(person.remaining)}</dd></div>
+                    <div><dt className="text-xs text-slate-400">Cash received</dt><dd className="mt-1 break-words text-lg font-semibold tabular-nums text-white">{amount(person.cashReceived)}</dd></div>
+                    <div><dt className="text-xs text-slate-400">Cash remaining</dt><dd className={`mt-1 break-words text-lg font-bold tabular-nums ${person.remaining < 0 || person.needsReview || (report.cashState && report.cashState !== 'ready') ? 'text-amber-300' : 'text-emerald-300'}`}>{person.remaining == null ? (report.cashState && report.cashState !== 'ready' ? 'Setup required' : 'Needs review') : amount(person.remaining)}</dd></div>
                   </dl>
-                  <p className="mt-4 border-t border-slate-700/70 pt-3 text-xs text-slate-400">Cash refunds {money.format(person.cashRefunds)} · Cash expenses {money.format(person.cashExpenses)}</p>
+                  <p className="mt-4 border-t border-slate-700/70 pt-3 text-xs text-slate-400">Cash refunds {amount(person.cashRefunds)} · Cash expenses {amount(person.cashExpenses)}</p>
                   {person.needsReview && <p className="mt-2 text-xs text-amber-200">Some legacy activity has missing staff or tender details. Verify it before accepting a remaining balance.</p>}
                 </article>
               ))}

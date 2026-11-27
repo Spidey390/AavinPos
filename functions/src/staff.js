@@ -15,7 +15,7 @@ export function reportPeriod(start, end) {
   return { start, end, from: from.toISOString(), until: until.toISOString(), nextDay: new Date(Date.parse(end) + 86400000).toISOString().slice(0, 10) };
 }
 
-export function summarizeStaff({ workspace, period, operators, activity, orders, refunds, expenses, payments, cutoverAt }) {
+export function summarizeStaff({ workspace, period, operators, activity, orders, refunds, expenses, payments, cutoverAt, cashState = 'ready' }) {
   const profiles = new Map(operators.map(person => [person.uid, person]));
   const logins = new Map(activity.map(person => [person.uid, person]));
   const rows = new Map();
@@ -73,16 +73,18 @@ export function summarizeStaff({ workspace, period, operators, activity, orders,
     if (row && payment.method === 'Cash') row.cashReceived += cents(payment.amount);
     else if (row && !['UPI', 'Card'].includes(payment.method)) row.needsReview = true;
   }
+  const cashReady = cashState === 'ready';
   const staff = [...rows.values()].map(row => ({ ...row,
-    totalSales: row.totalSales / 100, totalExpenses: row.totalExpenses / 100, cashReceived: row.cashReceived / 100,
-    cashRefunds: row.cashRefunds / 100, cashExpenses: row.cashExpenses / 100,
-    remaining: row.needsReview ? null : (row.cashReceived - row.cashRefunds - row.cashExpenses) / 100
+    totalSales: row.totalSales / 100, totalExpenses: row.totalExpenses / 100, cashReceived: cashReady ? row.cashReceived / 100 : null,
+    cashRefunds: cashReady ? row.cashRefunds / 100 : null, cashExpenses: cashReady ? row.cashExpenses / 100 : null,
+    remaining: row.needsReview || !cashReady ? null : (row.cashReceived - row.cashRefunds - row.cashExpenses) / 100
   })).sort((a, b) => b.totalSales - a.totalSales || a.name.localeCompare(b.name) || a.uid.localeCompare(b.uid));
-  return { period: { start: period.start, end: period.end }, generatedAt: new Date().toISOString(), staff,
+  return { period: { start: period.start, end: period.end }, generatedAt: new Date().toISOString(), staff, cashState,
     historyIncomplete: Boolean(cutoverAt && period.from < cutoverAt) };
 }
 
 export function createStaffService(db) {
+  const reportRequests = new Map();
   async function operator(tx, request, roles) {
     if (!id(request.auth?.uid)) fail('unauthenticated', 'Sign in to continue.');
     const profile = (await tx.get(db.doc(`operators/${request.auth.uid}`))).data();
@@ -111,25 +113,33 @@ export function createStaffService(db) {
       const profile = await operator(tx, request, ['owner']);
       if ((await tx.get(db.doc('posConfig/current'))).data()?.workspace !== workspace) fail('failed-precondition', 'The active workspace changed.');
       const base = db.collection(`posWorkspaces/${workspace}/orders`), gate = (await tx.get(db.doc(`posWorkspaces/${workspace}/config/financialMigration`))).data();
-      if (gate?.status !== 'ready') fail('failed-precondition', 'Finish financial migration before reviewing staff cash balances.');
-      const rateRef = db.doc(`financialRateLimits/${profile.uid}-staff-report`), rate = (await tx.get(rateRef)).data(), window = Math.floor(Date.now() / 60000);
+      const window = Math.floor(Date.now() / 60000), rate = reportRequests.get(profile.uid);
       const count = rate?.window === window ? rate.count + 1 : 1;
       if (count > 12) fail('resource-exhausted', 'Wait a minute before refreshing the staff report.');
+      if (reportRequests.size >= 1000) for (const [uid, rate] of reportRequests) if (rate.window !== window) reportRequests.delete(uid);
+      if (!rate && reportRequests.size >= 1000) fail('resource-exhausted', 'The report service is busy. Retry shortly.');
+      reportRequests.set(profile.uid, { window, count });
       const invoiceFields = ['cashierUid', 'cashierName', 'status', 'total', 'paymentMethod', 'splitBreakdown', 'createdAt', 'refund'];
       const inTime = (query, field) => query.where(field, '>=', period.from).where(field, '<', period.until).limit(10001);
       const expenseCollection = db.collection(`posWorkspaces/${workspace}/expenses`), expenseFields = ['recordedBy', 'recordedByName', 'amount', 'paymentMethod', 'date', 'createdAt'];
       const queries = [db.collection('operators').select('name', 'email', 'role', 'active').limit(501), db.collection('operatorActivity').select('lastLoginAt', 'name', 'email').limit(501),
         inTime(base, 'createdAt').select(...invoiceFields), inTime(base, 'refund.recordedAt').select(...invoiceFields),
-        inTime(expenseCollection, 'createdAt').select(...expenseFields), expenseCollection.where('date', '>=', start).where('date', '<', period.nextDay).limit(10001).select(...expenseFields),
-        inTime(db.collectionGroup('payments'), 'date').select('recordedBy', 'recordedByName', 'amount', 'method', 'date', 'type')];
+        inTime(expenseCollection, 'createdAt').select(...expenseFields), expenseCollection.where('date', '>=', start).where('date', '<', period.nextDay).limit(10001).select(...expenseFields)];
       const snapshots = await Promise.all(queries.map(query => tx.get(query)));
+      let cashState = gate?.status === 'ready' ? 'ready' : 'migration-required', paymentSnapshot;
+      if (cashState === 'ready') {
+        try { paymentSnapshot = await tx.get(inTime(db.collectionGroup('payments'), 'date').select('recordedBy', 'recordedByName', 'amount', 'method', 'date', 'type')); }
+        catch (error) {
+          if (error?.code === 9 && /index/i.test(error.message ?? '')) cashState = 'index-required';
+          else throw error;
+        }
+      }
       if (snapshots.some((snapshot, index) => snapshot.size > (index < 2 ? 500 : 10000))) fail('failed-precondition', 'This report is too large. Choose a shorter date range.');
+      if (paymentSnapshot?.size > 10000) fail('failed-precondition', 'This report is too large. Choose a shorter date range.');
       const rows = snapshot => snapshot.docs.map(doc => ({ ...doc.data(), uid: doc.id, path: doc.ref.path }));
       const expenseRows = [...new Map([...rows(snapshots[4]), ...rows(snapshots[5])].map(expense => [expense.path, expense])).values()];
-      const result = summarizeStaff({ workspace, period, operators: rows(snapshots[0]), activity: rows(snapshots[1]), orders: rows(snapshots[2]), refunds: rows(snapshots[3]), expenses: expenseRows, payments: rows(snapshots[6]), cutoverAt: gate.completedAt });
-      tx.set(rateRef, { window, count });
-      return result;
-    });
+      return summarizeStaff({ workspace, period, operators: rows(snapshots[0]), activity: rows(snapshots[1]), orders: rows(snapshots[2]), refunds: rows(snapshots[3]), expenses: expenseRows, payments: paymentSnapshot ? rows(paymentSnapshot) : [], cutoverAt: gate?.completedAt, cashState });
+    }, { readOnly: true });
   }
   return { recordStaffLogin, getStaffSummary };
 }

@@ -8,6 +8,7 @@ import { createHttpApp } from '../src/http-app.js';
 import { callableNames } from '../src/callables.js';
 import { serverConfig, trustedOrigin, validateBuild, validateHostedCredential } from '../src/server-config.js';
 import { collectSnapshot, verifySnapshot } from '../src/backup.js';
+import { createLocalApi } from '../src/local-api.js';
 let server, base, now = Date.now();
 before(async () => {
   const dist = await mkdtemp(join(tmpdir(), 'pos-http-'));
@@ -60,4 +61,9 @@ test('backup rejects foreign records and refuses oversized output',async()=>{
  const root='projects/test-pos/databases/(default)/documents'; const request=async path=>path.endsWith(':listCollectionIds')?{collectionIds:['items']}:{documents:[{name:'projects/other-pos/databases/(default)/documents/items/x',updateTime:'2026-11-27T10:00:00Z'}]};
  await assert.rejects(collectSnapshot({projectId:'test-pos',readTime:'2026-11-27T10:00:00Z',request}));
  await assert.rejects(collectSnapshot({projectId:'test-pos',readTime:'2026-11-27T10:00:00Z',maximumBytes:1,request:async path=>path===root+':listCollectionIds'?{collectionIds:['items']}:{documents:[{name:root+'/items/x',fields:{x:{stringValue:'large'}},updateTime:'2026-11-27T10:00:00Z'}]}}));
+});
+
+test('live local API refuses mixed emulator authentication and mismatched backend projects', async () => {
+  const options = { projectId: 'test-pos', origins: ['http://localhost:3000'], root: process.cwd() };
+  for (const env of [{ FIREBASE_AUTH_EMULATOR_HOST: 'localhost:9099' }, { FIRESTORE_EMULATOR_HOST: 'localhost:8080' }, { FUNCTIONS_EMULATOR: 'true' }, { POS_PROJECT_ID: 'other-pos' }]) await assert.rejects(createLocalApi(options, env));
 });

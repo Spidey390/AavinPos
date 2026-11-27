@@ -9,6 +9,7 @@ import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { createHttpApp } from '../functions/src/http-app.js';
 import { createStaffService } from '../functions/src/staff.js';
+import { localApiPlugin } from '../config/local-api.js';
 const requireFunctions = createRequire(new URL('../functions/package.json', import.meta.url));
 const { initializeApp: initializeAdminApp, deleteApp: deleteAdminApp } = requireFunctions('firebase-admin/app');
 const { getFirestore: getAdminFirestore } = requireFunctions('firebase-admin/firestore');
@@ -29,6 +30,10 @@ let callableModule;
 const projectId = 'demo-pos-rules';
 const dbFor = uid => env.authenticatedContext(uid, { email: `${uid}@example.test` }).firestore();
 const profile = (role, active = true) => ({ role, active, name: role, email: `${role}@example.test` });
+const emulatorToken = uid => {
+  const now = Math.floor(Date.now() / 1000), encode = value => Buffer.from(JSON.stringify(value)).toString('base64url');
+  return `${encode({ alg: 'none', typ: 'JWT' })}.${encode({ sub: uid, user_id: uid, aud: projectId, iss: `https://securetoken.google.com/${projectId}`, iat: now, exp: now + 3600, auth_time: now, firebase: { sign_in_provider: 'password' } })}.`;
+};
 
 before(async () => {
   env = await initializeTestEnvironment({ projectId, firestore: { rules: await readFile('firestore.rules', 'utf8') } });
@@ -458,11 +463,7 @@ test('legacy invoices cannot bypass refund reconciliation using forged client me
 });
 
 test('callable HTTP envelopes verify emulator Auth tokens and reject unauthenticated or forged requests', async () => {
-  const token = uid => {
-    const now = Math.floor(Date.now() / 1000);
-    const encode = value => Buffer.from(JSON.stringify(value)).toString('base64url');
-    return `${encode({ alg: 'none', typ: 'JWT' })}.${encode({ sub: uid, user_id: uid, aud: projectId, iss: `https://securetoken.google.com/${projectId}`, iat: now, exp: now + 3600, auth_time: now, firebase: { sign_in_provider: 'password' } })}.`;
-  };
+  const token = emulatorToken;
   const call = (name, data, uid) => fetch(`${callableOrigin}/${name}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'http://localhost:3000', ...(uid ? { Authorization: `Bearer ${token(uid)}` } : {}) }, body: JSON.stringify({ data }) });
   const anonymous = await call('checkout', checkoutData());
   assert.equal(anonymous.status, 401);
@@ -529,4 +530,36 @@ test('owner staff reports scope private cash payments to the active workspace an
   const report = await staff.getStaffSummary({ auth: { uid: 'owner' }, data });
   const row = report.staff.find(row => row.uid === 'staff-a');
   assert.equal(row.totalSales, 100); assert.equal(row.cashReceived, 125); assert.equal(row.totalExpenses, 15); assert.equal(row.remaining, 110);
+});
+
+test('owner can read legacy sales and expenses before migration without cash guesses or database writes', async () => {
+  const admin = getAdminFirestore(adminApp), staff = createStaffService(admin), date = new Date().toISOString();
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
+  await admin.doc('posWorkspaces/live/config/financialMigration').delete();
+  await admin.doc('posWorkspaces/live/orders/legacy-summary').set({ cashierUid: 'staff-a', cashierName: 'Staff', status: 'Completed', total: 100, paymentMethod: 'Cash', createdAt: date });
+  await admin.doc('posWorkspaces/live/expenses/legacy-summary').set({ recordedBy: 'staff-a', amount: 15, paymentMethod: 'Cash', createdAt: date });
+  const report = await staff.getStaffSummary({ auth: { uid: 'owner' }, data: { workspace: 'live', start: today, end: today } });
+  const row = report.staff.find(row => row.uid === 'staff-a');
+  assert.equal(report.cashState, 'migration-required'); assert.equal(row.totalSales, 100); assert.equal(row.totalExpenses, 15);
+  assert.equal(row.cashReceived, null); assert.equal(row.remaining, null);
+  assert.equal((await admin.collection('financialRateLimits').get()).size, 0);
+  assert.equal((await admin.doc('posWorkspaces/live/config/financialMigration').get()).exists, false);
+  await assert.rejects(invoke('checkout', checkoutData({ idempotencyKey: 'must-stay-blocked' })), { code: 'failed-precondition' });
+  assert.equal((await admin.doc('posWorkspaces/live/orders/must-stay-blocked').get()).exists, false);
+});
+
+test('Vite bridge executes authenticated checkout against the emulator and retains the migration gate', async () => {
+  const vite = await createServer({ configFile: false, logLevel: 'silent', optimizeDeps: { noDiscovery: true, entries: [] }, server: { host: '127.0.0.1', port: 0, strictPort: true }, plugins: [localApiPlugin({ projectId, loadApi: options => createHttpApp({ handlers: callableModule, origins: options.origins, distPath: resolve('public') }) })] });
+  await vite.listen();
+  try {
+    const origin = `http://127.0.0.1:${vite.httpServer.address().port}`;
+    const call = data => fetch(`${origin}/api/checkout`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: origin, Authorization: `Bearer ${emulatorToken('staff-a')}` }, body: JSON.stringify({ data }) });
+    const response = await call(checkoutData({ idempotencyKey: 'vite-invoice' }));
+    assert.equal(response.status, 200); assert.equal((await response.json()).result.total, 25);
+    assert.equal(response.headers.get('Access-Control-Allow-Origin'), origin);
+    await getAdminFirestore(adminApp).doc('posWorkspaces/live/config/financialMigration').update({ status: 'migrating' });
+    const blocked = await call(checkoutData({ idempotencyKey: 'vite-blocked' }));
+    assert.equal(blocked.status, 400); assert.equal((await blocked.json()).error.status, 'FAILED_PRECONDITION');
+    assert.equal((await getAdminFirestore(adminApp).doc('posWorkspaces/live/orders/vite-blocked').get()).exists, false);
+  } finally { await vite.close(); }
 });
