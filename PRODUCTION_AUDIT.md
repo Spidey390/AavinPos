@@ -1,6 +1,6 @@
 # Production security audit follow-up — 27 November 2026
 
-All four approved code blockers are resolved on `prod-hardening`. No Functions deployment, rules publication, Hosting deployment, paid-plan activation or production migration was performed. The branch is prepared for staged deployment; production cutover still requires the reviewed data migration and cloud configuration below.
+All four approved code blockers are resolved on `prod-hardening`. No Functions deployment, rules publication, Hosting deployment, paid-plan activation or legacy-data migration was performed. The owner subsequently authorized deleting the test business records, initializing a fresh workspace and publishing only the payment-history index. The fresh workspace needs no legacy-data migration; production cutover still requires the cloud configuration and acceptance below.
 
 **Production verdict: NOT SAFE TO DEPLOY directly without the manual cutover.** There are no known remaining code blockers within H04–H07. A local emulator cannot certify historical production balances, missing legacy payments, deployed IAM/rules or domain configuration.
 
@@ -12,7 +12,7 @@ The standalone host adds bounded JSON parsing, a bounded pre-auth IP limiter, ex
 
 A Spark-compatible administrator snapshot CLI reads typed Firestore REST documents at one recent fixed read time, traverses private nested collections, writes a private digest-verified local file, and never writes to Firestore. It is not a managed backup; restoration to staging and separate Auth/rules/index/IAM recovery remain manual release gates. No production backup or migration was run.
 
-**Free hosting limitation:** [Render's free service documentation](https://render.com/docs/free) explicitly recommends these instances for previews rather than production. Sleep, wake-up delay, quotas and possible suspension are remaining live-billing availability risks. The code is ready for a free staging rehearsal; the production verdict remains NOT SAFE until migration/recovery, real staging acceptance and availability requirements are resolved. No paid plan was activated.
+**Free hosting limitation:** [Render's free service documentation](https://render.com/docs/free) explicitly recommends these instances for previews rather than production. Sleep, wake-up delay, quotas and possible suspension are remaining live-billing availability risks. The code is ready for a free staging rehearsal; the production verdict remains NOT SAFE until recovery, real staging acceptance and availability requirements are resolved. Legacy-data migration also applies to any other workspace that retains old records. No paid plan was activated.
 
 ## Owner staff activity follow-up
 
@@ -40,6 +40,12 @@ Validation now covers 83 passing tests (32 root, 14 server unit, 37 rules/emulat
 | H06 | HIGH | Account refunds left customer debt unchanged | Fixed: full refund uses original trusted invoice proof and atomically records refund, invoice status and account credit. Duplicate/concurrent refunds are rejected. Production server flag remains false. | `functions/src/financial.js:234` |
 | L01 | HIGH | Local dev/preview returned 404 for financial API requests | Fixed: loopback Vite bridge mounts the existing authenticated handlers, validates projects and uses the actual port for CORS. Private server files are denied. | `config/local-api.js:9`, `functions/src/local-api.js:9` |
 | L02 | MEDIUM | Owner staff report failed entirely before migration or a missing payment index | Fixed: read-only partial report shows recorded sales/expenses/logins; cash amounts remain null with setup guidance. Checkout stays gated. | `functions/src/staff.js:108`, `src/components/staff/StaffActivityView.jsx:37` |
+
+## Approved test-data reset
+
+After the owner confirmed that all existing business records were disposable test data, the old workspace was recursively removed, including 3 bills, 1 customer, 1 catalog item and related configuration/identity records. A new empty workspace was staged with billing locked, deletion and unchanged operator profiles were verified, then the fresh financial schema-2 gate was set ready. The two operator profiles, Firebase sign-in accounts and latest verified sign-in records were retained. Invoice sequencing starts at 1001 and refunds remain disabled. No legacy-data migration was run; the removed test history is not needed for the fresh workspace.
+
+The full owner-report verification found the missing collection-group payment-date index. The owner explicitly approved publishing just that index. Its change preserves all existing single-collection date indexes; application code, Functions, Hosting and Firestore rules were not deployed. Private reset/index receipts are stored under ignored `.migration-reports/`. The real catalog, deployed security rules, host setup and staging acceptance remain release steps.
 
 ## Server financial contract
 
@@ -143,8 +149,8 @@ The final H06 commit contains refund reconciliation, disabled-default enforcemen
 
 ## Remaining blockers and follow-up
 
-**No known remaining code blockers in H04–H07.** Production is still gated on the chosen host configuration, rules publication, backup/recovery validation, a reviewed and reconciled migration, and signed-in staging validation. The selected free Render service also has unresolved availability limitations. Missing historical payments and pre-cutover refund errors require real backup/accounting evidence; migration intentionally does not fabricate corrections.
+**No known remaining code blockers in H04–H07.** Production is still gated on the chosen host configuration, rules publication, backup/recovery validation, real catalog setup and signed-in staging validation. The current empty workspace is initialized and needs no legacy-data migration. Any other workspace retaining legacy records still requires a reviewed, reconciled migration. The selected free Render service also has unresolved availability limitations. Missing historical payments and pre-cutover refund errors require real backup/accounting evidence; migration intentionally does not fabricate corrections.
 
 Previously identified follow-up remains: query pagination/server aggregates at larger scale, catalog bulk-import recovery, major frontend upgrades, retained unused components and provider-side abuse/App Check/monitoring configuration. See the initial full audit at `git show 7d6b534:PRODUCTION_AUDIT.md`. None of these decisions was silently changed by this four-blocker follow-up.
 
-**Final verdict: code is ready for staging; NOT SAFE for an unattended production deployment until the manual cutover is completed.** No deployment or production migration occurred in this task.
+**Final verdict: code is ready for staging; NOT SAFE for an unattended production deployment until the manual cutover is completed.** Only the separately approved payment-history index was published; no application deployment or legacy-data migration occurred.

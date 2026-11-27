@@ -4,7 +4,7 @@ The selected free route runs one Node web service on Render. It serves the produ
 
 This is a **free preview/staging setup**, not an always-available production commitment. Render explicitly advises against using free instances for production: they sleep after 15 idle minutes, take about a minute to wake, and may be suspended when free allowances are exhausted. Firestore and Auth also have free-plan quotas. Keep the Render service on **Free**, use no paid database/disk/add-ons, and avoid adding a payment method if you require suspension rather than overage billing. See [Render free limits](https://render.com/docs/free) and [Firebase pricing](https://firebase.google.com/pricing).
 
-No Render account, service-account grant/key, credential upload, deployment, rules publication, live backup or production migration was performed by this change.
+No Render account, service-account grant/key, credential upload, application deployment, rules publication, live backup or legacy-data migration was performed. The owner subsequently authorized discarding the test business data and publishing only the payment-history index.
 
 ## 1. Verify the reviewed code locally
 
@@ -19,6 +19,8 @@ Root/standalone tooling runs on Node 24. The optional Firebase Functions target 
 For local development, `npm run dev` now mounts the same authenticated API alongside Vite. `npm run build` followed by `npm run preview` also includes that API. Both use local administrator ADC credentials and exact loopback origins for the actual port, including Vite's fallback ports. Set public Firebase web values in `.env`; an optional ignored `server.env` supplies server-only settings. `POS_PROJECT_ID`, if present, must match the browser project. Restart dev/preview after backend JavaScript or credential changes. Local operation needs no Render service or Blaze upgrade. API calls require sign-in; HTTP 401 for an anonymous call confirms the route exists.
 
 Before migration, the owner can inspect recorded sales, expenses and login times. Cash totals show **Setup required** until the reviewed migration and payment-history index are ready. Checkout/payment recording remain blocked by the migration gate. On the November 27 read-only readiness check, project `aavin-81398` had no initialized financial migration; this check changed no database records.
+
+**Current project state after the approved test reset:** the discarded workspace and its 3 bills, 1 customer, 1 catalog item and related configuration/identity records were removed. The active workspace is now `b4f4e8b4-2c0c-4895-a9c8-503bc50ff83b`, initialized with financial schema 2, invoice numbering starting at 1001 and refunds disabled. The two operator profiles, Firebase sign-in accounts and recorded sign-in times were retained. There are no legacy customer records to migrate in this fresh workspace. The payment-history index was separately approved for publication. Add the real menu before billing; complete the hosting/rules/recovery acceptance steps before live use.
 
 ## 2. Prepare a separate backend identity
 
@@ -91,19 +93,21 @@ This read-only REST snapshot uses one fixed recent Firestore read time for colle
 
 Review the existing customer balances, legacy refunds and missing older payment evidence before migration. The old fifty-entry cap may already have discarded evidence that cannot be reconstructed.
 
-## 5. Publish rules and migrate only during the reviewed cutover
+## 5. Publish rules and verify financial readiness
 
-Once backup/recovery and staging checks pass, publish the deny-direct-write rules and the staff report payment-date index:
+Once backup/recovery and staging checks pass, publish the deny-direct-write rules. This remains a manual application cutover step:
 
 ```sh
-npm run deploy:firestore -- --project aavin-81398
+npm run deploy:rules -- --project aavin-81398
 ```
 
-Generate the read-only migration plan for the active workspace (confirmed at the last readiness check as `204d5dcc4202630c4f0bdbb6604771d7`; recheck `posConfig/current.workspace` before running):
+The payment-history index publication is a separate owner-approved change; it preserves existing single-collection date indexes. For another project that still needs both rules and indexes, use `npm run deploy:firestore -- --project PROJECT_ID`.
+
+**Only if preserving legacy customer data:** the fresh active workspace above does not need migration. The following commands are for a different legacy workspace after backup/reconciliation. Replace `WORKSPACE_ID` with the independently verified intended workspace; do not reuse the deleted test workspace ID.
 
 ```sh
 node functions/scripts/migrate-payments.js --project aavin-81398 \
-  --workspace 204d5dcc4202630c4f0bdbb6604771d7 \
+  --workspace WORKSPACE_ID \
   --dry-run --out .migration-reports/review.json
 ```
 
@@ -111,7 +115,7 @@ Review all errors, counts, current balances and completeness warnings. Only afte
 
 ```sh
 node functions/scripts/migrate-payments.js --project aavin-81398 \
-  --workspace 204d5dcc4202630c4f0bdbb6604771d7 \
+  --workspace WORKSPACE_ID \
   --apply --plan .migration-reports/review.json \
   --ack-backup --confirm-project aavin-81398
 ```
