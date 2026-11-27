@@ -22,6 +22,9 @@ async function customers(db, workspace) {
 export function prepareCustomer(snapshot) {
   const data = snapshot.data();
   if (!id(snapshot.id) || !data || typeof data.name !== 'string' || !/^[+][0-9]{8,15}$/.test(data.phone)) throw new Error('Invalid customer identity.');
+  for (const [key, max] of [['name', 100], ['email', 120], ['notes', 500]]) if (data[key] !== undefined && (typeof data[key] !== 'string' || data[key].length > max)) throw new Error('Invalid legacy customer text.');
+  if (data.archived !== undefined && typeof data.archived !== 'boolean') throw new Error('Invalid archive flag.');
+  cents(data.avgOrderValue ?? 0);
   for (const key of ['ordersCount']) if (!Number.isSafeInteger(data[key] ?? 0) || (data[key] ?? 0) < 0) throw new Error('Invalid customer count.');
   cents(data.dueBalance ?? 0, true); cents(data.creditLimit ?? 0); cents(data.totalSpent ?? 0);
   const source = data.accountTransactions ?? [];
@@ -56,7 +59,11 @@ export async function planMigration(db, projectId, workspace) {
   if (!id(workspace)) throw new Error('Invalid workspace.');
   const plan = { version: 1, projectId, workspace, customers: [], errors: [], warning: 'Previously discarded payments cannot be recovered. Reconcile older backups and legacy account refunds before cutover.' };
   for (const snapshot of await customers(db, workspace)) {
-    if (snapshot.data().financialSchema === 2) continue;
+    if (snapshot.data().financialSchema === 2) {
+      const value = snapshot.data(), privateData = (await account(db, workspace, snapshot.id).get()).data();
+      if (Object.keys(value).some(key => !publicFields.includes(key)) || privateData?.status !== 'ready') plan.errors.push({ id: snapshot.id, message: 'Version-2 customer has private fields or an incomplete private account.' });
+      continue;
+    }
     try {
       const prepared = prepareCustomer(snapshot);
       plan.customers.push({ id: snapshot.id, sourceHash: snapshotHash(snapshot), entries: prepared.entries.length, payments: prepared.entries.filter(entry => entry.type === 'payment').length });
@@ -68,6 +75,7 @@ export async function planMigration(db, projectId, workspace) {
 
 export async function applyMigration(db, projectId, plan) {
   const { digest, ...body } = plan;
+  if (!Array.isArray(plan.customers) || !Array.isArray(plan.errors) || plan.customers.some(item => !id(item.id) || !/^[a-f0-9]{64}$/.test(item.sourceHash)) || new Set(plan.customers.map(item => item.id)).size !== plan.customers.length) throw new Error('Invalid migration entries.');
   if (plan.version !== 1 || plan.projectId !== projectId || !id(plan.workspace) || plan.errors.length || fingerprint(body) !== digest) throw new Error('Invalid or unresolved dry-run plan.');
   const gate = migration(db, plan.workspace);
   const leaseId = randomUUID();

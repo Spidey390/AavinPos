@@ -49,6 +49,13 @@
           "functionId": "recordPayment",
           "region": "asia-south1"
         }
+      },
+      {
+        "source": "/api/refund",
+        "function": {
+          "functionId": "refund",
+          "region": "asia-south1"
+        }
       }
     ],
     "headers": [

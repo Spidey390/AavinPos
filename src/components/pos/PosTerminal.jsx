@@ -309,8 +309,8 @@ export default function PosTerminal() {
               <span className="text-xs text-orange-200">{hasDiscount ? 'Edit' : 'Add'}</span>
             </button>
           )}
-          <button type="button" aria-haspopup="dialog" disabled={isDraftSaving}
-            onClick={() => setCustomItemRevision(paymentRevision)} className={cartAction}>
+            <button type="button" aria-haspopup="dialog" disabled
+              title="Priced items must first be added to the menu by the owner." onClick={() => setCustomItemRevision(paymentRevision)} className={cartAction}>
             <Plus className="size-4 shrink-0 text-orange-300" aria-hidden="true" />
             Custom item
           </button>

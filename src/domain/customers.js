@@ -53,8 +53,8 @@ export function formatAccountStatement(customer, isOwner = false) {
     text += `\n*Recent Transactions:*\n`;
     for (const tx of recent) {
       const d = tx.date ? tx.date.slice(0, 10) : '';
-      const sign = tx.type === 'charge' ? '+' : '-';
-      const typeLabel = tx.type === 'charge' ? 'Bill' : 'Payment';
+      const sign = tx.balanceDelta === 0 ? '' : ['charge', 'opening'].includes(tx.type) ? '+' : '-';
+      const typeLabel = tx.type === 'refund' ? 'Refund' : tx.type === 'opening' ? 'Opening balance' : tx.type === 'charge' ? 'Bill' : 'Payment';
       text += `• ${d}: ${typeLabel} ${sign}₹${Number(tx.amount || 0).toFixed(2)} (${tx.referenceNo || tx.method || 'Account'})\n`;
       if (isOwner && Array.isArray(tx.items) && tx.items.length > 0) {
         for (const item of tx.items) {
@@ -68,3 +68,10 @@ export function formatAccountStatement(customer, isOwner = false) {
   return text;
 }
 
+
+export function orderBelongsToCustomer(order, customer) {
+  const stableId = order.customerId ?? order.customer?.id;
+  if (stableId) return stableId === customer.id;
+  const phone = normalizePhone(customer.phone);
+  return Boolean(phone && normalizePhone(order.customerPhone || order.customer?.phone || '') === phone);
+}

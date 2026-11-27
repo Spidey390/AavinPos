@@ -14,7 +14,7 @@ test('production config fails closed on missing, demo or unreviewed public varia
   assert.equal(resolveFirebaseConfig({ VITE_USE_FIREBASE_EMULATORS: 'true' }, true).projectId, 'demo-billingapp');
 });
 
-test('hosting and preview share strict production headers and only health is rewritten', async () => {
+test('hosting and preview share strict headers and route the complete callable API', async () => {
   const firebase = JSON.parse(await readFile('firebase.json', 'utf8'));
   const shared = Object.fromEntries(firebase.hosting.headers.find(entry => entry.source === '**').headers.map(({ key, value }) => [key, value]));
   assert.deepEqual(shared, securityHeaders());
@@ -23,6 +23,7 @@ test('hosting and preview share strict production headers and only health is rew
   assert.doesNotMatch(policy, /localhost|127\.0\.0\.1|https:\/\/\*/);
   assert.match(policy, /frame-ancestors 'none'/);
   assert.deepEqual(firebase.hosting.rewrites.filter(route => !route.function), [{ source: '/health', destination: '/health.json' }]);
-  assert.ok(firebase.hosting.rewrites.some(route => route.source === '/api/checkout'));
+  const callables = ['checkout', 'initializeWorkspace', 'saveCustomer', 'archiveCustomer', 'recordPayment', 'refund'];
+  assert.deepEqual(firebase.hosting.rewrites.filter(route => route.function), callables.map(functionId => ({ source: `/api/${functionId}`, function: { functionId, region: 'asia-south1' } })));
   assert.equal(JSON.parse(await readFile('public/health.json', 'utf8')).status, 'ok');
 });

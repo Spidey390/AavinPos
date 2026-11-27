@@ -3,6 +3,8 @@ import { auth } from './auth';
 import { runPaymentIntent } from '../domain/paymentIntent';
 import { app, useEmulators, emulatorPorts } from './firebaseApp';
 
+// Presentation gate only. The callable independently enforces its trusted server flag.
+export const refundsUIEnabled = import.meta.env.VITE_ENABLE_RECONCILED_REFUNDS === 'true';
 const functions = getFunctions(app, useEmulators ? 'asia-south1' : `${window.location.origin}/api`);
 if (useEmulators) connectFunctionsEmulator(functions, '127.0.0.1', emulatorPorts.functions);
 export const callFinancial = async (name, data) => (await httpsCallable(functions, name, { timeout: 60000 })(data)).data;

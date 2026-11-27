@@ -5,6 +5,7 @@ import { businessDate, dateRange, inRange } from '../../domain/dates';
 import RefundDialog from './RefundDialog';
 import FilterToolbar from '../layout/FilterToolbar';
 import { matchesProductSearch } from '../../domain/products';
+import { refundsUIEnabled } from '../../services/functions';
 
 const all = 'All';
 const timeOptions = [all, 'Today', 'Yesterday', 'This Week', 'This Month'].map(value => ({ value }));
@@ -194,7 +195,7 @@ export default function OrdersKDS() {
                             <Eye className="h-3.5 w-3.5" aria-hidden="true" />
                             <span className="record-action-text">Invoice</span>
                           </button>
-                          {!isOwner && settings.allowStaffRefunds && isCompleted && (
+                          {refundsUIEnabled && !isOwner && settings.allowStaffRefunds && isCompleted && (
                             <button type="button" className="rounded border border-rose-700 px-2 py-1 text-rose-200"
                               onClick={() => setRefundTarget(order)}>Record refund</button>
                           )}

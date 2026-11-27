@@ -7,7 +7,7 @@ export const firebaseEnvironmentNames = {
 
 export function resolveFirebaseConfig(env, development = false) {
   const known = [...Object.values(firebaseEnvironmentNames), 'VITE_USE_FIREBASE_EMULATORS',
-    'VITE_FIREBASE_AUTH_EMULATOR_PORT', 'VITE_FIREBASE_FIRESTORE_EMULATOR_PORT', 'VITE_FIREBASE_FUNCTIONS_EMULATOR_PORT'];
+    'VITE_FIREBASE_AUTH_EMULATOR_PORT', 'VITE_FIREBASE_FIRESTORE_EMULATOR_PORT', 'VITE_FIREBASE_FUNCTIONS_EMULATOR_PORT', 'VITE_ENABLE_RECONCILED_REFUNDS'];
   const unknown = Object.keys(env).filter(key => key.startsWith('VITE_') && !known.includes(key));
   if (unknown.length) throw new Error(`Unreviewed public environment variables: ${unknown.join(', ')}`);
   const emulator = env.VITE_USE_FIREBASE_EMULATORS === 'true';

@@ -4,6 +4,7 @@ import { after, before, beforeEach, test } from 'node:test';
 import { assertFails, assertSucceeds, initializeTestEnvironment } from '@firebase/rules-unit-testing';
 import { collection, doc, getDoc, getDocs, query, setDoc, updateDoc, where, writeBatch, setLogLevel } from 'firebase/firestore';
 import { createServer } from 'vite';
+import { createServer as createHTTPServer } from 'node:http';
 import { createRequire } from 'node:module';
 const requireFunctions = createRequire(new URL('../functions/package.json', import.meta.url));
 const { initializeApp: initializeAdminApp, deleteApp: deleteAdminApp } = requireFunctions('firebase-admin/app');
@@ -18,6 +19,10 @@ let moduleServer;
 let database;
 let adminApp;
 let service;
+let callableServer;
+let authLookupServer;
+let callableOrigin;
+let callableModule;
 const projectId = 'demo-pos-rules';
 const dbFor = uid => env.authenticatedContext(uid, { email: `${uid}@example.test` }).firestore();
 const profile = (role, active = true) => ({ role, active, name: role, email: `${role}@example.test` });
@@ -37,6 +42,33 @@ before(async () => {
     }
   }] });
   database = await moduleServer.ssrLoadModule('/src/db/db.js');
+  process.env.FIREBASE_CONFIG = JSON.stringify({ projectId });
+  process.env.FUNCTIONS_EMULATOR = 'true';
+  process.env.ENABLE_RECONCILED_REFUNDS = 'false';
+  authLookupServer = createHTTPServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const body = JSON.parse(Buffer.concat(chunks).toString());
+    response.setHeader('Content-Type', 'application/json');
+    response.end(JSON.stringify({ users: (body.localId ?? []).map(uid => ({ localId: uid, email: `${uid}@example.test`, validSince: '0', disabled: false })) }));
+  });
+  await new Promise(resolve => authLookupServer.listen(0, '127.0.0.1', resolve));
+  process.env.FIREBASE_AUTH_EMULATOR_HOST = `127.0.0.1:${authLookupServer.address().port}`; // loopback Auth lookup fixture for emulator tokens
+  callableModule = await import('../functions/src/index.js');
+  callableServer = createHTTPServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    try { request.body = JSON.parse(Buffer.concat(chunks).toString() || '{}'); }
+    catch { request.body = null; }
+    request.header = name => request.headers[name.toLowerCase()];
+    response.status = code => { response.statusCode = code; return response; };
+    response.send = value => { response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify(value)); return response; };
+    const handler = callableModule[request.url.slice(1)];
+    if (typeof handler !== 'function') { response.statusCode = 404; response.end(); return; }
+    await handler(request, response);
+  });
+  await new Promise(resolve => callableServer.listen(0, '127.0.0.1', resolve));
+  callableOrigin = `http://127.0.0.1:${callableServer.address().port}`;
 });
 beforeEach(async () => {
   await env.clearFirestore();
@@ -65,7 +97,7 @@ beforeEach(async () => {
     })) await setDoc(doc(db, path), data);
   });
 });
-after(async () => { await moduleServer?.close(); await env?.cleanup(); await deleteAdminApp(adminApp); });
+after(async () => { if (callableServer) await new Promise(resolve => callableServer.close(resolve)); if (authLookupServer) await new Promise(resolve => authLookupServer.close(resolve)); await moduleServer?.close(); await env?.cleanup(); await deleteAdminApp(adminApp); const { getApp } = requireFunctions('firebase-admin/app'); await deleteAdminApp(getApp()); });
 
 test('anonymous and unprovisioned users cannot read business data', async () => {
   for (const db of [env.unauthenticatedContext().firestore(), dbFor('stranger'), dbFor('disabled')]) {
@@ -149,7 +181,7 @@ test('staff cannot directly rewrite balances, visits, spend or ledger history', 
   }
 });
 
-test('account payments preserve history and exactly reconcile the balance', async () => {
+test('direct customer balance and embedded-history writes are denied', async () => {
   const ref = doc(dbFor('staff-a'), 'posWorkspaces/live/customers/c1');
   const entry = { id: 'tx-1', date: new Date().toISOString(), type: 'payment', amount: 20,
     method: 'Cash', referenceNo: '', notes: '', balanceAfter: 80 };
@@ -288,7 +320,7 @@ test('migration blocks invalid history and cannot apply an altered dry-run plan'
   await assert.rejects(applyMigration(admin, 'other-project', { ...plan, errors: [] }));
 });
 
-test('account refunds remain denied until server reconciliation is available', async () => {
+test('regression: production refunds stay disabled even if owner settings allow them', async () => {
   await env.withSecurityRulesDisabled(context => updateDoc(doc(context.firestore(), 'posWorkspaces/live/config/settings'), { allowStaffRefunds: true }));
   const saved = await database.executeOrderTransaction('live', { order: order({ paymentMethod: 'Account' }), customerId: 'c1' });
   await assert.rejects(database.refundOrder('live', saved, { reason: 'Local audit fixture', recordedAt: new Date().toISOString(), cashierUid: 'staff-a', cashierName: 'Staff' }));
@@ -381,4 +413,88 @@ test('migration preserves more than fifty legacy payments and duplicate legacy I
   await applyMigration(admin, projectId, plan);
   assert.equal((await admin.collection('posWorkspaces/live/customerAccounts/long-history/payments').get()).size, 60);
   assert.equal((await admin.doc('posWorkspaces/live/customers/long-history').get()).data().dueBalance, 40);
+});
+
+
+test('enabled reconciled Account refunds reduce debt once and preserve immutable history', async () => {
+  const admin = getAdminFirestore(adminApp), enabled = createFinancialService(admin, { allowRefunds: true });
+  await admin.doc('posWorkspaces/live/config/settings').update({ allowStaffRefunds: true });
+  const saved = await invoke('checkout', checkoutData({ customerId: 'c1', paymentMethod: 'Account' }));
+  const data = { workspace: 'live', orderId: saved.id, idempotencyKey: 'credit-refund', reason: 'Full credit refund' };
+  const result = await enabled.refund({ auth: { uid: 'staff-a' }, data });
+  assert.equal(result.amount, 25);
+  assert.equal(result.settlement, 'account-credit');
+  assert.equal((await admin.doc('posWorkspaces/live/customers/c1').get()).data().dueBalance, 100);
+  assert.deepEqual(await enabled.refund({ auth: { uid: 'staff-a' }, data }), result);
+  await assert.rejects(enabled.refund({ auth: { uid: 'staff-a' }, data: { ...data, idempotencyKey: 'second-refund' } }), { code: 'already-exists' });
+  await assert.rejects(enabled.refund({ auth: { uid: 'staff-a' }, data: { ...data, amount: 999 } }), { code: 'invalid-argument' });
+  const refunds = await admin.collection(`posWorkspaces/live/financialInvoices/${saved.id}/refunds`).get();
+  assert.equal(refunds.size, 1);
+  assert.equal((await admin.doc(`posWorkspaces/live/customerAccounts/c1/ledger/refund-${saved.id}`).get()).data().balanceDelta, -25);
+  for (const uid of ['staff-a', 'owner']) await assertFails(updateDoc(doc(dbFor(uid), 'posWorkspaces/live/orders', saved.id), { refund: null }));
+});
+
+test('cash refunds leave customer debt unchanged and refunds need both server and owner gates', async () => {
+  const admin = getAdminFirestore(adminApp), enabled = createFinancialService(admin, { allowRefunds: true });
+  const saved = await invoke('checkout', checkoutData({ customerId: 'c1' }));
+  const data = { workspace: 'live', orderId: saved.id, idempotencyKey: 'cash-refund', reason: 'Cash returned' };
+  await assert.rejects(enabled.refund({ auth: { uid: 'staff-a' }, data }), { code: 'permission-denied' });
+  await admin.doc('posWorkspaces/live/config/settings').update({ allowStaffRefunds: true });
+  const result = await enabled.refund({ auth: { uid: 'staff-a' }, data });
+  assert.equal(result.settlement, 'external-return-recorded');
+  assert.equal((await admin.doc('posWorkspaces/live/customers/c1').get()).data().dueBalance, 100);
+  assert.equal((await admin.doc(`posWorkspaces/live/customerAccounts/c1/ledger/refund-${saved.id}`).get()).data().balanceDelta, 0);
+});
+
+test('paid credit refunds create customer credit and serialize with simultaneous payments', async () => {
+  const admin = getAdminFirestore(adminApp), enabled = createFinancialService(admin, { allowRefunds: true });
+  await admin.doc('posWorkspaces/live/config/settings').update({ allowStaffRefunds: true });
+  const saved = await invoke('checkout', checkoutData({ customerId: 'c1', paymentMethod: 'Account' }));
+  await Promise.all([
+    enabled.refund({ auth: { uid: 'staff-a' }, data: { workspace: 'live', orderId: saved.id, idempotencyKey: 'parallel-refund', reason: 'Return' } }),
+    invoke('recordPayment', { workspace: 'live', customerId: 'c1', idempotencyKey: 'parallel-payment', amount: 125, method: 'Cash' })
+  ]);
+  assert.equal((await admin.doc('posWorkspaces/live/customers/c1').get()).data().dueBalance, -25);
+});
+
+test('legacy invoices cannot bypass refund reconciliation using forged client metadata', async () => {
+  const admin = getAdminFirestore(adminApp), enabled = createFinancialService(admin, { allowRefunds: true });
+  await admin.doc('posWorkspaces/live/config/settings').update({ allowStaffRefunds: true });
+  await admin.doc('posWorkspaces/live/orders/legacy-invoice').set({ ...order(), id: 'legacy-invoice', financialSchema: 2, requestHash: 'forged', paymentMethod: 'Account', customerId: 'c1' });
+  await assert.rejects(enabled.refund({ auth: { uid: 'staff-a' }, data: { workspace: 'live', orderId: 'legacy-invoice', idempotencyKey: 'legacy-refund', reason: 'Legacy return' } }), { code: 'failed-precondition' });
+  assert.equal((await admin.doc('posWorkspaces/live/customers/c1').get()).data().dueBalance, 100);
+});
+
+test('callable HTTP envelopes verify emulator Auth tokens and reject unauthenticated or forged requests', async () => {
+  const token = uid => {
+    const now = Math.floor(Date.now() / 1000);
+    const encode = value => Buffer.from(JSON.stringify(value)).toString('base64url');
+    return `${encode({ alg: 'none', typ: 'JWT' })}.${encode({ sub: uid, user_id: uid, aud: projectId, iss: `https://securetoken.google.com/${projectId}`, iat: now, exp: now + 3600, auth_time: now, firebase: { sign_in_provider: 'password' } })}.`;
+  };
+  const call = (name, data, uid) => fetch(`${callableOrigin}/${name}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'http://localhost:3000', ...(uid ? { Authorization: `Bearer ${token(uid)}` } : {}) }, body: JSON.stringify({ data }) });
+  const anonymous = await call('checkout', checkoutData());
+  assert.equal(anonymous.status, 401);
+  const outsider = await call('checkout', checkoutData(), 'stranger');
+  assert.equal(outsider.status, 403);
+  const forged = await call('checkout', checkoutData({ items: [{ productId: 'p1', quantity: 1, price: 1 }] }), 'staff-a');
+  assert.equal(forged.status, 400);
+  const saved = await call('checkout', checkoutData(), 'staff-a');
+  assert.equal(saved.status, 200);
+  const body = await saved.json();
+  assert.equal(body.result.total, 25);
+  assert.equal(saved.headers.get('Access-Control-Allow-Origin'), 'http://localhost:3000');
+  const payment = await call('recordPayment', { workspace: 'live', customerId: 'c1', idempotencyKey: 'http-payment', amount: 10, method: 'Cash' }, 'staff-a');
+  assert.equal(payment.status, 200);
+  assert.equal((await payment.json()).result.dueBalance, 90);
+  const refund = await call('refund', { workspace: 'live', orderId: body.result.id, idempotencyKey: 'http-refund', reason: 'Disabled' }, 'staff-a');
+  assert.equal(refund.status, 400);
+});
+
+
+test('financial client writes are denied for every role, including inactive workspaces', async () => {
+  for (const uid of ['owner', 'staff-a']) for (const path of [
+    'posWorkspaces/archive/orders/forged', 'posWorkspaces/live/financialOperations/forged',
+    'posWorkspaces/live/financialInvoices/forged', 'posWorkspaces/live/financialInvoices/forged/payments/forged',
+    'posWorkspaces/live/financialInvoices/forged/refunds/forged', 'posWorkspaces/live/config/invoiceSequence'
+  ]) await assertFails(setDoc(doc(dbFor(uid), path), { amount: 1 }));
 });

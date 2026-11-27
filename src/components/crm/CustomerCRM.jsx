@@ -9,7 +9,7 @@ import Dialog from '../layout/Dialog';
 import { loadCustomerLedger } from '../../db/db';
 import { newId } from '../../domain/ids';
 import { sanitizeText, sanitizeNumber } from '../../domain/sanitize';
-import { formatAccountStatement } from '../../domain/customers';
+import { formatAccountStatement, orderBelongsToCustomer } from '../../domain/customers';
 import { businessDate, shiftDate } from '../../domain/dates';
 
 export default function CustomerCRM() {
@@ -109,11 +109,7 @@ export default function CustomerCRM() {
     }
 
     // 2. Also check customer orders from the orders store
-    const customerOrders = orders.filter(o => 
-      o.customerPhone === statementCustomer.phone ||
-      (o.customer?.id && o.customer.id === statementCustomer.id) ||
-      (o.customer?.phone && o.customer.phone === statementCustomer.phone)
-    );
+    const customerOrders = orders.filter(order => orderBelongsToCustomer(order, statementCustomer));
 
     for (const ord of customerOrders) {
       const alreadyIncluded = txs.some(tx => 
@@ -789,7 +785,7 @@ export default function CustomerCRM() {
                     </p>
                   ) : (
                     [...ledgerRows].map(tx => {
-                      const isCharge = tx.type === 'charge';
+                      const isCharge = ['charge', 'opening'].includes(tx.type);
                       return (
                         <div key={tx.id || tx.date} className="p-3 rounded-xl bg-[#141924] border border-[#232b3b] flex items-center justify-between text-xs">
                           <div className="flex items-center gap-2.5">
@@ -798,7 +794,7 @@ export default function CustomerCRM() {
                             </span>
                             <div>
                               <div className="font-bold text-slate-200">
-                                {isCharge ? 'Bill on Account' : 'Payment Received'}
+                                {tx.type === 'refund' ? 'Refund recorded' : tx.type === 'opening' ? 'Opening balance' : isCharge ? 'Bill on Account' : 'Payment Received'}
                                 {tx.invoiceNo && <span className="ml-1 text-[10px] text-slate-400 font-normal">({tx.invoiceNo})</span>}
                               </div>
                               <div className="text-[10px] text-slate-400">
@@ -812,7 +808,7 @@ export default function CustomerCRM() {
                           <div className="text-right flex items-center gap-3">
                             <div>
                               <div className={`font-mono font-bold ${isCharge ? 'text-orange-400' : 'text-emerald-400'}`}>
-                                {isCharge ? '+' : '-'}₹{Number(tx.amount || 0).toFixed(2)}
+                                {tx.balanceDelta === 0 ? '' : isCharge ? '+' : '-'}₹{Number(tx.amount || 0).toFixed(2)}
                               </div>
                               {tx.balanceAfter != null && (
                                 <div className="text-[10px] font-mono text-slate-500">

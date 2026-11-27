@@ -303,7 +303,6 @@ test('customer accounts system validates tender, credit limits and statement sum
 
 
 
-
 test('uncertain payment requests retain the same operation ID across retries', async () => {
   const { runPaymentIntent } = await import('../src/domain/paymentIntent.js');
   const rows = new Map(), operations = [];
@@ -322,4 +321,13 @@ test('uncertain payment requests retain the same operation ID across retries', a
   let called = false;
   await assert.rejects(runPaymentIntent({ storage: { getItem() { throw new Error('blocked'); } }, uid: 'staff', payload, call: async () => { called = true; } }));
   assert.equal(called, false);
+});
+
+test('customer history uses stable IDs across phone changes and does not join reused phones', async () => {
+  const { orderBelongsToCustomer } = await import('../src/domain/customers.js');
+  const customer = { id: 'customer-a', phone: '+919000000000' };
+  assert.equal(orderBelongsToCustomer({ customerId: 'customer-a', customerPhone: '+919000000001' }, customer), true);
+  assert.equal(orderBelongsToCustomer({ customerId: 'customer-b', customerPhone: customer.phone }, customer), false);
+  assert.equal(orderBelongsToCustomer({ customerPhone: customer.phone }, customer), true);
+  assert.equal(orderBelongsToCustomer({ customerPhone: '' }, customer), false);
 });

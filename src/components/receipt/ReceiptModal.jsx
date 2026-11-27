@@ -3,6 +3,7 @@ import Dialog from '../layout/Dialog';
 import { X, Printer } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import RefundDialog from '../orders/RefundDialog';
+import { refundsUIEnabled } from '../../services/functions';
 
 export default function ReceiptModal() {
   const { modalData, closeModal, settings, orders, isOwner, activeView } = useApp();
@@ -11,7 +12,7 @@ export default function ReceiptModal() {
 
   if (!order) return null;
   const merchant = order.merchant || settings;
-  const canRefundFromHistory = activeView === 'orders' && !isOwner && settings.allowStaffRefunds &&
+  const canRefundFromHistory = refundsUIEnabled && activeView === 'orders' && !isOwner && settings.allowStaffRefunds &&
     order.status === 'Completed' && !order.refund;
   const hasRecordedGst = order.gstRate > 0 || order.cgst > 0 || order.sgst > 0 || Boolean(order.merchant?.gstin);
   const taxRate = Number.isFinite(order.gstRate) ? ` (${order.gstRate / 2}%)` : '';

@@ -1,3 +1,4 @@
+import { initialSettings } from './defaults.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { HttpsError } from 'firebase-functions/v2/https';
 
@@ -8,7 +9,9 @@ export function object(value, keys) {
 }
 export function text(value = '', max = 120) {
   if (typeof value !== 'string' || value.length > max) fail('invalid-argument', 'Invalid text field.');
-  return value.normalize('NFKC').trim();
+  const normalized = value.normalize('NFKC').trim();
+  if (normalized.length > max) fail('invalid-argument', 'Text exceeds the permitted length.');
+  return normalized;
 }
 export function cents(value, signed = false) {
   if (typeof value !== 'number' || !Number.isFinite(value) || Math.abs(value) > 1e9 || (!signed && value < 0) || Math.abs(value * 100 - Math.round(value * 100)) > 0.00001) fail('invalid-argument', 'Invalid currency amount.');
@@ -17,9 +20,8 @@ export function cents(value, signed = false) {
 const canonical = value => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value;
 export const fingerprint = value => createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
 const revision = draft => draft?.revision ?? draft?.updatedAt ?? null;
-const initialSettings = { brandName: 'Aavin POS', invoicePrefix: 'AP-', startingNumber: 1001, gstRate: 0, allowCashierDiscounts: true, allowStaffRefunds: false, audioBeepsEnabled: true, defaultThermalSize: '80mm Standard POS Thermal', commonCategories: [], commonAddons: [], upiVpaId: '', upiQrImage: '', payeeName: 'Aavin POS' };
 
-export function createFinancialService(db) {
+export function createFinancialService(db, { allowRefunds = false } = {}) {
   const row = (workspace, type, key) => db.doc(`posWorkspaces/${workspace}/${type}/${key}`);
   const current = db.doc('posConfig/current');
   async function access(tx, request, workspace, roles) {
@@ -126,19 +128,22 @@ export function createFinancialService(db) {
       const now = new Date().toISOString();
       const merchant = Object.fromEntries(['brandName', 'streetAddress', 'city', 'state', 'pincode', 'phone', 'receiptFooterMessage', 'termsAndConditions', 'license'].map(key => [key, text(settings[key], key === 'termsAndConditions' ? 1000 : 300)]));
       const saved = { id: data.idempotencyKey, requestHash: hash, invoiceSequence: number, invoiceNo: text(settings.invoicePrefix, 40) + number, tokenNo: sequence.count % 99 + 101,
-        createdAt: now, displayDate: new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' }).format(new Date(now)),
+        financialSchema: 2, createdAt: now, displayDate: new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' }).format(new Date(now)),
         channel: data.channel, tableId: data.tableId ?? null, table: table?.name ?? '', customerId: data.customerId ?? null, customerName: customer?.name ?? 'Walk-in Guest', customerPhone: customer?.phone ?? '',
         items, itemsCount: items.reduce((sum, item) => sum + item.quantity, 0), itemsSummary: items.map(item => `${item.quantity}x ${item.name}`).join(', '),
         subtotal: subtotal / 100, discount: discount / 100, total: total / 100, discountPercent: percent, fixedDiscount: 0, merchant,
         paymentMethod: data.paymentMethod, amountReceived: received / 100, splitBreakdown, referenceNo, status: 'Completed', cashierUid: operator.uid, cashierName: operator.name || operator.email };
       applyRate();
       tx.create(orderRef, saved);
+      const proofRef = row(data.workspace, 'financialInvoices', saved.id);
+      tx.create(proofRef, { schemaVersion: 2, orderId: saved.id, customerId: saved.customerId, total: saved.total, paymentMethod: saved.paymentMethod, requestHash: hash, date: now });
+      if (!credit) tx.create(proofRef.collection('payments').doc('settlement'), { id: 'settlement', type: 'invoice-payment', date: now, amount: saved.total, method: saved.paymentMethod, recordedBy: operator.uid });
       tx.update(seqRef, { next: number + 1, count: sequence.count + 1, lastOrderId: saved.id });
       if (customer) {
         const count = (customer.ordersCount ?? 0) + 1;
         const spent = cents(customer.totalSpent ?? 0) + total;
         tx.update(customerRef, { ordersCount: count, totalSpent: spent / 100, avgOrderValue: Math.round(spent / count / 10) / 10, dueBalance: due / 100 });
-        if (credit) tx.create(accountRef.collection('ledger').doc(`charge-${saved.id}`), { id: `charge-${saved.id}`, type: 'charge', date: now, amount: total / 100, orderId: saved.id, invoiceNo: saved.invoiceNo, items, method: 'Account', balanceBefore: oldDue / 100, balanceAfter: due / 100, recordedBy: operator.uid });
+        if (credit) tx.create(accountRef.collection('ledger').doc(`charge-${saved.id}`), { id: `charge-${saved.id}`, type: 'charge', date: now, amount: total / 100, balanceDelta: total / 100, orderId: saved.id, invoiceNo: saved.invoiceNo, items, method: 'Account', balanceBefore: oldDue / 100, balanceAfter: due / 100, recordedBy: operator.uid });
       }
       if (tableRef) tx.update(tableRef, { activeOrder: null, currentOrderTotal: 0, reserved: false, status: 'Available' });
       return saved;
@@ -215,7 +220,7 @@ export function createFinancialService(db) {
       const applyRate = await throttle(tx, operator.uid, 'payment');
       const date = new Date().toISOString(), paymentId = `payment-${data.idempotencyKey}`;
       const result = { id: paymentId, amount: amount / 100, dueBalance: after / 100 };
-      const entry = { id: paymentId, type: 'payment', date, amount: amount / 100, method: data.method,
+      const entry = { id: paymentId, type: 'payment', date, amount: amount / 100, balanceDelta: -amount / 100, method: data.method,
         referenceNo: normalized.referenceNo, notes: normalized.notes, balanceBefore: before / 100, balanceAfter: after / 100, recordedBy: operator.uid };
       applyRate();
       tx.create(accountRef.collection('payments').doc(paymentId), entry);
@@ -226,6 +231,57 @@ export function createFinancialService(db) {
       return result;
     });
   }
+  async function refund(request) {
+    const data = request.data;
+    object(data, ['workspace', 'orderId', 'idempotencyKey', 'reason']);
+    if (!id(data.orderId) || !id(data.idempotencyKey)) fail('invalid-argument', 'Invalid refund identifiers.');
+    const reason = text(data.reason, 300);
+    if (!reason) fail('invalid-argument', 'Enter a refund reason.');
+    const hash = fingerprint({ workspace: data.workspace, orderId: data.orderId, reason });
+    return db.runTransaction(async tx => {
+      const operator = await access(tx, request, data.workspace, ['staff']);
+      if (!allowRefunds) fail('failed-precondition', 'Refunds remain disabled until the reconciled server feature is explicitly enabled.');
+      const operationRef = row(data.workspace, 'financialOperations', data.idempotencyKey);
+      const previous = (await tx.get(operationRef)).data();
+      if (previous) {
+        if (previous.type !== 'refund' || previous.uid !== operator.uid || previous.requestHash !== hash) fail('already-exists', 'This operation ID was already used.');
+        return previous.result;
+      }
+      const orderRef = row(data.workspace, 'orders', data.orderId), proofRef = row(data.workspace, 'financialInvoices', data.orderId);
+      const [orderSnap, proofSnap, settingsSnap, refundSnap] = await Promise.all([tx.get(orderRef), tx.get(proofRef), tx.get(row(data.workspace, 'config', 'settings')), tx.get(proofRef.collection('refunds').doc('full'))]);
+      const order = orderSnap.data(), proof = proofSnap.data();
+      if (settingsSnap.data()?.allowStaffRefunds !== true) fail('permission-denied', 'The owner has not enabled staff refunds.');
+      if (!order || order.status !== 'Completed') fail('not-found', 'Completed invoice not found.');
+      if (order.refund || refundSnap.exists) fail('already-exists', 'This invoice is already refunded.');
+      if (order.financialSchema !== 2 || proof?.schemaVersion !== 2 || proof.requestHash !== order.requestHash || proof.customerId !== order.customerId || proof.paymentMethod !== order.paymentMethod || cents(proof.total) !== cents(order.total)) fail('failed-precondition', 'Legacy or inconsistent invoices require administrator reconciliation.');
+      const credit = ['Account', 'Credit'].includes(order.paymentMethod), amount = cents(proof.total);
+      if (!credit) {
+        const payment = (await tx.get(proofRef.collection('payments').doc('settlement'))).data();
+        if (!payment || payment.type !== 'invoice-payment' || cents(payment.amount) !== amount) fail('failed-precondition', 'Original payment proof is missing or inconsistent.');
+      }
+      const customerRef = proof.customerId ? row(data.workspace, 'customers', proof.customerId) : null;
+      const accountRef = proof.customerId ? row(data.workspace, 'customerAccounts', proof.customerId) : null;
+      const customer = customerRef ? (await tx.get(customerRef)).data() : null;
+      const account = accountRef ? (await tx.get(accountRef)).data() : null;
+      if (customerRef && (!customer || customer.financialSchema !== 2 || account?.status !== 'ready')) fail('failed-precondition', 'Customer account must be reconciled first.');
+      if (credit && !customer) fail('failed-precondition', 'Credit invoice has no customer account.');
+      const before = customer ? cents(customer.dueBalance, true) : 0, after = before - (credit ? amount : 0);
+      cents(after / 100, true);
+      const applyRate = await throttle(tx, operator.uid, 'refund');
+      const date = new Date().toISOString(), refundId = `refund-${data.orderId}`;
+      const result = { id: refundId, amount: amount / 100, recordedAt: date, cashierUid: operator.uid, cashierName: operator.name || operator.email, settlement: credit ? 'account-credit' : 'external-return-recorded' };
+      const entry = { id: refundId, type: 'refund', date, amount: amount / 100, balanceDelta: credit ? -amount / 100 : 0,
+        orderId: order.id, invoiceNo: order.invoiceNo, method: order.paymentMethod, notes: reason,
+        balanceBefore: before / 100, balanceAfter: after / 100, recordedBy: operator.uid, settlement: result.settlement };
+      applyRate();
+      tx.update(orderRef, { refund: result });
+      tx.create(proofRef.collection('refunds').doc('full'), entry);
+      tx.create(operationRef, { type: 'refund', uid: operator.uid, requestHash: hash, result });
+      if (accountRef) tx.create(accountRef.collection('ledger').doc(refundId), entry);
+      if (credit) tx.update(customerRef, { dueBalance: after / 100, ...(after !== 0 ? { archived: false } : {}) });
+      return result;
+    });
+  }
   async function archiveCustomer(request) {
     object(request.data, ['workspace', 'customerId']);
     if (!id(request.data.customerId)) fail('invalid-argument', 'Invalid customer ID.');
@@ -233,10 +289,10 @@ export function createFinancialService(db) {
       await access(tx, request, request.data.workspace, ['owner']);
       const ref = row(request.data.workspace, 'customers', request.data.customerId);
       const customer = (await tx.get(ref)).data();
-      if (!customer || cents(customer.dueBalance, true) !== 0) fail('failed-precondition', 'Settle the customer balance before archiving.');
+      if (!customer || customer.financialSchema !== 2 || cents(customer.dueBalance, true) !== 0) fail('failed-precondition', 'Settle the customer balance before archiving.');
       tx.update(ref, { archived: true });
       return { archived: true };
     });
   }
-  return { checkout, initializeWorkspace, saveCustomer, archiveCustomer, recordPayment };
+  return { checkout, initializeWorkspace, saveCustomer, archiveCustomer, recordPayment, refund };
 }

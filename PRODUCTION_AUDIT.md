@@ -1,184 +1,120 @@
-# Production security audit — 26 November 2026
+# Production security audit follow-up — 27 November 2026
 
-## Follow-up: approved callable backend
+All four approved code blockers are resolved on `prod-hardening`. No Functions deployment, rules publication, Hosting deployment, paid-plan activation or production migration was performed. The branch is prepared for staged deployment; production cutover still requires the reviewed data migration and cloud configuration below.
 
-H04 is resolved in source: checkout now reads catalog prices/options, settings, customer credit and invoice sequencing inside an Admin SDK transaction. Requests containing price/total fields are rejected; clients cannot write invoices or sequencing. Auth/role checks, per-operator throttling, canonical receipts and idempotent retry checks execute on the server. Custom-priced counter items require owner catalog setup. H05 now separates private accounts/ledger from staff-readable version-2 summaries. Legacy summaries are hidden from staff until reviewed migration; client financial/profile writes are denied. The migration defaults to a read-only plan, verifies source hashes, preserves balances and retained history, writes immutable private entries, and supports idempotent reruns. Historical entries already discarded are explicitly marked incomplete. H07 now records each payment and ledger event in immutable subcollection documents, without a retention cap. Server transactions derive balances from the current summary and use request-bound idempotency; the browser retains opaque operation IDs across uncertain responses. Tests preserve 55 new payments and migrate 60 legacy payments without loss. H06 reconciled refunds follow separately. No deployment has occurred.
+**Production verdict: NOT SAFE TO DEPLOY directly without the manual cutover.** There are no known remaining code blockers within H04–H07. A local emulator cannot certify historical production balances, missing legacy payments, deployed IAM/rules or domain configuration.
 
+## Updated before / after table
 
-**Final verdict: NOT SAFE TO DEPLOY.** Code-level hardening is implemented on `prod-hardening`, but H04, H05 and H07 require architecture/schema/access-policy decisions before production customer-account use. H06 must be resolved before enabling manual refunds. The source changes have not been deployed.
+| Blocker | Severity | Before | Current result | Source |
+|---|---|---|---|---|
+| H04 | HIGH | Client-controlled invoice lines and totals | Fixed: authenticated callable recomputes catalog variants/add-ons, totals, discounts, current credit limits, receipt metadata and sequencing in one Admin transaction. Client invoice/sequence writes are denied. | `functions/src/financial.js:55` |
+| H05 | HIGH | Staff could read owner ledger data | Fixed: operational summaries use financialSchema 2. Credit policy/history live under owner-only customerAccounts. Legacy summaries stay unreadable to staff until reviewed migration is ready; all financial client writes are denied. | `firestore.rules:27` |
+| H07 | HIGH | Payment history dropped after fifty entries | Fixed: one immutable document per payment and ledger event; unlimited retained history with paginated owner reads. Request-bound idempotency survives uncertain responses and rejects edited retries. | `functions/src/financial.js:198` |
+| H06 | HIGH | Account refunds left customer debt unchanged | Fixed: full refund uses original trusted invoice proof and atomically records refund, invoice status and account credit. Duplicate/concurrent refunds are rejected. Production server flag remains false. | `functions/src/financial.js:234` |
 
-Stack: React 18 / Vite / Firebase Authentication / Cloud Firestore / Firebase Hosting. There is no Express, Python, custom API server, AI endpoint, SQL server or server upload handler in this repository.
+## Server financial contract
 
-The workspace had no `.git` directory. Git was initialized directly on `prod-hardening` before source changes, and `58594fe` captures the original source. Before locations below refer to that snapshot; current locations refer to the hardened branch. Earlier history and current cloud configuration/deployed rules were unavailable. `.env` was inspected without printing values and remains ignored and unchanged. No source files were deleted.
+Callable exports: `checkout`, `recordPayment`, `refund`, `initializeWorkspace`, `saveCustomer`, `archiveCustomer`. They run in `asia-south1`, Node.js 22, with bounded request size, 10 maximum instances and concurrency 1 per instance. Protected mutations re-read the active operator and workspace migration gate in each Firestore transaction. Financial mutations are throttled per operator/action. Errors expose curated messages, not stacks. Hosting rewrites `/api/<name>` to the callables, so the browser CSP continues using same-origin API access. Production CORS is configured through `POS_ALLOWED_ORIGINS`.
 
-## Before / after findings
+Checkout accepts product IDs, variant/add-on selections, quantity, notes, channel, customer/table references, requested discount percentage and tender details. It rejects caller-supplied price/total/merchant/cashier fields. Catalog prices and settings come from Firestore. An optional expected total is only a stale-screen assertion; it never determines the amount. Unknown/custom-priced items require owner catalog creation. Limits are 100 lines, 25 add-ons per line and two-decimal currency. Cash/UPI/card receipts remain manual operator assertions; no payment-provider capture/webhook was added.
 
-| Severity | ID | Before finding | Before location | After / remaining action | Current location |
-|---|---|---|---|---|---|
-| CRITICAL | C01 | Any signed-in user could create an owner profile; login also auto-created Auth accounts. | `firestore.rules:41; src/components/auth/OperatorGate.jsx:94` | Fixed: only trusted administrators create owners; public login only signs in. | `firestore.rules:106` |
-| HIGH | H01 | An email substring granted owner UI access, including error/cache fallbacks. | `src/components/auth/OperatorWorkspace.jsx:9` | Fixed: authorization requires a server-confirmed active operator profile. | `src/components/auth/OperatorWorkspace.jsx:22` |
-| HIGH | H02 | Staff could rewrite balances, ledger contents and customer statistics without a real sale/payment. | `firestore.rules:96` | Fixed: exact monetary reconciliation, append-only rolling history, new-invoice coupling and identity checks. | `firestore.rules:53` |
-| HIGH | H03 | Checkout never checked the customer credit limit against current transaction data. | `src/db/db.js:367; src/domain/customers.js:11` | Fixed: concurrent checkout reads and checks the canonical customer; rules require an atomic debit within the limit. | `src/db/db.js:389` |
-| HIGH | H04 | Client-defined invoice lines/subtotals and nested drafts were not comprehensively validated by the server. | `firestore.rules:107; src/db/db.js:378` | PARTIAL / BLOCKER: scalar/tender/sequence checks added; forged lines still pass direct writes. Trusted settlement or a line-document schema needs your decision. | `firestore.rules:35` |
-| HIGH | H05 | Staff can read embedded ledger fields that the UI presents as owner-only. | `firestore.rules:73` | OPEN / BLOCKER: split private ledger data from staff-readable customer summaries, or explicitly revise the access policy. | `firestore.rules:140` |
-| HIGH | H06 | Refunding an Account/Credit invoice does not reduce the customer debt. | `src/db/db.js:478` | OPEN / BLOCKER when refunds are enabled: requires an agreed atomic refund/reconciliation design. Refunds remain disabled by default. | `src/db/db.js:498` |
-| HIGH | H07 | Embedded account transactions discard entries older than the newest 50, losing payment history. | `src/db/db.js:393; src/db/db.js:455` | OPEN / BLOCKER for production customer accounts: approve a durable, immutable payment/refund ledger and migration. | `src/db/db.js:414` |
-| HIGH | H08 | Untrusted category/staff/item names could address inherited object properties in reports. | `src/components/reports/BusinessReports.jsx:97; src/components/dashboard/OperationsDashboard.jsx:83` | Fixed: aggregation dictionaries have no prototype; browser-tested with __proto__ names. | `src/components/reports/BusinessReports.jsx:98` |
-| HIGH | H09 | The default deployment published Hosting without the Firestore rules. | `package.json:11` | Fixed: deployment scripts include hosting and firestore:rules. Production publication was not performed. | `package.json:11` |
-| MEDIUM | M01 | Production CSP allowed inline scripts, broad network/image hosts and loopback connections; no HSTS header. | `index.html:9; firebase.json:22` | Fixed: HTTP CSP with exact Firebase endpoints, no inline scripts/loopback in production, HSTS and framing/MIME protections. | `config/security.js:1` |
-| MEDIUM | M02 | Missing Firebase configuration only logged an error; production builds could succeed. | `src/services/firebaseApp.js:31` | Fixed: missing, placeholder, demo, unexpected public variables and production emulator mode fail closed. | `src/domain/firebaseConfig.js:8` |
-| MEDIUM | M03 | Default persistent Auth state outlived shared-terminal sessions; counter drafts survived sign-out. | `src/components/auth/OperatorGate.jsx:6; src/context/AppContext.jsx:31` | Fixed: session persistence and per-operator draft cleanup on sign-out. | `src/services/auth.js:5` |
-| MEDIUM | M04 | The browser-only cooldown can be bypassed through direct Firebase Auth calls. | `src/components/auth/OperatorGate.jsx:102` | OPEN configuration review: Firebase enforces provider limits, but project-specific quotas, password policy, enumeration protection and App Check enforcement were not available to inspect. | `src/components/auth/OperatorGate.jsx:92` |
-| MEDIUM | M05 | Malformed saved drafts or render/import failures could blank the app. | `src/context/AppContext.jsx:31; src/main.jsx:8` | Fixed: persisted draft validation, top-level error boundary and safe recovery/loading UI. | `src/domain/drafts.js:6` |
-| MEDIUM | M06 | CSV report text could execute spreadsheet formulas. | `src/components/reports/BusinessReports.jsx:126` | Fixed: formula-prefix neutralization and correct CSV quoting; export uses a revocable Blob URL. | `src/domain/csv.js:7` |
-| MEDIUM | M07 | CSV import split on commas, accepted partial numeric strings and had no size limit. | `src/domain/csv.js:6; src/components/menu/MenuCatalog.jsx:636` | Fixed: quoted fields, exact currency parsing, 2 MB / 5,000-product limits and file-read errors. | `src/domain/csv.js:5` |
-| MEDIUM | M08 | Collections are subscribed in full; reports and customer history grow with all stored orders. | `src/db/db.js:42` | OPEN scale decision: choose retention, pagination and server aggregates. Silently limiting reads would understate financial totals. | `src/db/db.js:44` |
-| MEDIUM | M09 | Customer purchase history used an older order field shape and UTC grouping. | `src/components/crm/CustomerCRM.jsx:95` | Fixed: current customerPhone invoices are included; grouping uses India business dates and skips invalid dates. Stable customer IDs on invoices remain a future schema decision. | `src/components/crm/CustomerCRM.jsx:97` |
-| MEDIUM | M10 | Staff account forms offered profile/credit administration that server rules reject; failed imports closed and lost retry context. | `src/components/crm/CustomerCRM.jsx:551; src/components/menu/MenuCatalog.jsx:93` | Fixed: owner-only administration fields/controls; import dialog stays open on failure. | `src/components/crm/CustomerCRM.jsx:221` |
-| MEDIUM | M11 | Raw provider messages reached toasts/logs, while production stripped all application logging. | `src/context/AppContext.jsx:207; vite.config.js:29` | Fixed: safe provider messages and structured event/code logs; production retains sanitized application error logging. Centralized monitoring remains an operational choice. | `src/services/errors.js:1` |
-| MEDIUM | M12 | Currency entry/restore validation allowed negative restored prices or prices that checkout cannot settle; staff passwords could exceed the login input limit. | `src/db/backup.js:11; src/components/menu/MenuCatalog.jsx:226; src/components/staff/StaffPermissions.jsx:26` | Fixed: negative prices rejected on restore, exact currency validated at entry, staff passwords bounded to the sign-in limit. Historical positive price precision is preserved on backup import. | `src/db/backup.js:10` |
-| MEDIUM | M13 | Bulk CSV imports write multiple independent batches and can partially apply after interruption. | `src/db/db.js:306` | OPEN workflow decision: define whole-import atomicity/idempotency and recovery before changing schema or import semantics. Owners should inspect partial imports before retrying. | `src/db/db.js:318` |
-| MEDIUM | M14 | Reports could expose empty totals before the first collection snapshot was received. | `src/context/AppContext.jsx:59` | Fixed: gate views/writes on each required collection and require server-confirmed snapshots; sign-out also discards in-memory records. | `src/context/AppContext.jsx:77` |
-| LOW | L01 | No static health endpoint, real path 404 or descriptive metadata. | `firebase.json:12; index.html:10` | Fixed: /health, hosting 404, description/robots/theme metadata; favicon retained. | `public/health.json:1` |
-| LOW | L02 | No lint script or database authorization regression tests. | `package.json:6; tests/domain.test.js:230` | Fixed: ESLint, isolated rules/real-transaction tests, secret scan and combined verify command. | `package.json:17` |
-| LOW | L03 | Several dependency major versions trail current releases. | `package.json:18` | Compatible updates applied; React 19, Vite 8, plugin-react 6 and Tailwind 4 migrations require a separate compatibility plan. npm audit reports zero vulnerabilities. | `package.json:19` |
-| LOW | L04 | Unreferenced components and stale marketing/operating claims remain in retained source. | `src/components/landing/LandingFeaturesModal.jsx:9; src/components/tables/TableManagement.jsx:45` | README corrected; no source files deleted. Decide whether to keep or remove the listed legacy components. | `src/components/landing/LandingFeaturesModal.jsx:5` |
-| LOW | L05 | Firebase/Firestore still produces a large shared browser chunk. | `src/services/branding.js:1` | Initial entry improved from ~319 kB to ~147 kB; Firestore chunk remains ~558 kB (~148 kB gzip). No bundle warning is raised at the existing 600 kB limit. | `src/services/branding.js:1` |
+Invoice IDs bind retries to operator and request content. Original server proofs and invoice tender receipts are stored privately. Current customer credit limits are private database configuration; staff cannot provide a larger limit or rewrite balances. Customer administration goes through role-checked callables; profile edits preserve live balances and historical records. Archiving retains financial history and requires a zero balance.
 
+## Paths and permissions
 
-## 1. Secrets
+- `posWorkspaces/{workspace}/customers/{customer}`: operational summary/contact fields only; staff query `financialSchema == 2` after the workspace migration gate is ready. Client writes are denied.
+- `.../customerAccounts/{customer}`: private credit policy, cutover metadata and completeness marker. Owner reads only.
+- `.../customerAccounts/{customer}/payments/{payment}`: one immutable account-payment document per operation.
+- `.../customerAccounts/{customer}/ledger/{event}`: immutable opening, charge, payment and refund events. Owner reads only; owner and staff client writes both denied.
+- `.../orders/{invoice}`: shared operational invoice/receipt. Client writes are denied in active and archived workspaces.
+- `.../financialInvoices/{invoice}` plus `payments/settlement` and `refunds/full`: owner-only server proofs and immutable invoice settlement/refund evidence.
+- `.../financialOperations/{operation}`: private idempotency receipts; no client writes.
 
-No private service-account credentials, private keys, database credentials, JWT signing secrets, payment-provider keys or AI keys were detected in source, ignored environment files, build output or the available newly created Git history. This is a heuristic scan plus targeted review, not evidence about unavailable earlier history. `.env` variants and logs/build artifacts are ignored; `.env.example` is tracked. A public-variable allowlist rejects unexpected `VITE_*` names at build/startup.
+Managed Firestore backups are authoritative for restoration. The application JSON export now includes private account history, invoice proofs, payment/refund events and idempotency receipts, but client-side financial restore/reset is deliberately closed. Use an administrator restore workflow that preserves these records.
 
-The existing environment contains Firebase web registration only. Its API key is intentionally browser-visible and does not grant Firestore authorization. No private key was replaced and no private-secret rotation is required by this scan. Review API/referrer restrictions and rotate the web key if it has been abused or enabled for unrelated paid APIs. See [Firebase API-key guidance](https://firebase.google.com/docs/projects/api-keys).
+## Refund reconciliation and disabled default
 
-## 2. Authentication and IDOR
+`ENABLE_RECONCILED_REFUNDS=false` remains the server default. The browser UI also defaults off with `VITE_ENABLE_RECONCILED_REFUNDS=false`, hiding payout actions and disabling the owner toggle. This is a presentation gate; changing browser settings cannot bypass the server flag. Changing the owner UI preference alone cannot enable refunds. Both the trusted server flag and the owner's staff-refund policy are required. The enabled path is tested locally, but is not activated for production.
 
-Owner provisioning now requires a trusted Firebase administrator. Signing in cannot create an Auth account or grant an owner role. Missing, disabled, cached or failed operator reads do not grant access. Losing server verification after sign-in shows an access error instead of an indefinite loading screen. Owners may create staff only; staff cannot promote themselves or others. Disabling an operator is checked by Firestore rules on protected operations.
+Account/Credit refunds subtract the original invoice total from current debt and append an account-credit event atomically. A fully paid account can become a negative balance (customer credit); no cash is sent. An archived customer is reactivated if the refund creates a usable balance. Cash/card/UPI refunds record an externally returned amount and do not alter customer account debt. Gross visit/spend totals retain their previous meaning; reports subtract recorded refunds separately.
 
-Actual emulator requests test anonymous/unprovisioned/disabled denial, operator escalation, configuration/catalog writes, inactive-workspace access, and staff A reading/writing staff B expenses. Own-expense queries require the caller UID; staff-wide expense enumeration fails. Orders and customer summaries are intentionally shared within this single business, rather than scoped to the cashier who created them. This is not a multi-tenant application.
+Amounts come from the original immutable server proof, not current catalog prices or caller input. A deterministic full-refund record prevents duplicates even if an invoice field is inconsistent. Pre-cutover invoices without trusted proof are rejected for automatic refunds and need administrator reconciliation. Existing historical refund mistakes must be reviewed rather than silently guessed during migration.
 
-Passwords and token issuance are handled by Firebase Authentication. There is no application password table or JWT signing key to replace with bcrypt/argon2. Firebase ID tokens expire after about an hour; refresh/session management is provider-owned. Browser auth now uses session persistence. Cookie flags are not applicable to the existing token-based SPA; an HTTP-only cookie design would require a trusted API. See [Firebase session management](https://firebase.google.com/docs/auth/admin/manage-sessions).
+## Migration: dry-run first, no production run performed
 
-## 3. Input validation
+`functions/scripts/migrate-payments.js` defaults to a read-only dry run. It writes a local 0600 plan under ignored `.migration-reports/`; no customer names, phone numbers or payment details are printed. The plan contains source hashes and counts. Applying requires the reviewed plan, matching project/workspace and explicit backup acknowledgement.
 
-Firestore rules now validate monetary scalars, tender types, sequence transitions, customer identity creation, credit limits and customer balance/statistic deltas. The real checkout transaction validates the current bill and current customer rather than relying on stale UI state. Payment-history updates preserve the retained prefix and must reconcile exactly. Staff cannot inject a refund while creating an invoice.
+The migration validates identities, currency, dates, balances and document size. It preserves the current balance and every retained legacy entry, including duplicate legacy IDs. Each payment and event receives a deterministic destination ID. Existing immutable destinations are verified, never overwritten. Bounded transactions support histories longer than fifty entries. A lease prevents simultaneous migrations; the workspace remains financially locked after a failed/incomplete apply until a reviewed resume completes.
 
-**H04 remains:** rules do not validate every nested item/draft and do not prove that line totals equal subtotal or catalog prices. Client checks are bypassable. One diagnostic intentionally writes a forged invoice successfully. A trusted settlement endpoint or a different line-item schema is required. Do not treat the client validator as a server security boundary.
+Ledger/credit fields move off staff-readable documents before they become version 2. Staff cannot read summaries while cutover is in progress. Changed source hashes, malformed records, plan tampering and unresolved data errors fail closed. Rerunning a completed plan is idempotent. After an interrupted process, wait two minutes for its lease to expire before a controlled resume; inspect any source conflicts before generating a new plan.
 
-New bill limits are 500 lines and monetary scalars up to 1,000,000,000, with two decimal places; discount percentages are 0–100. CSV imports are bounded and support quoting; exports neutralize spreadsheet formulas. QR uploads are browser-only, limited by file type/size, rendered down to 640 px, saved as PNG/JPEG data URLs and capped below Firestore's document limit. No executable HTML rendering, eval/Function construction, server filesystem path handling, SQL/NoSQL string queries or server upload/exec endpoint was found. React escapes rendered values. Backup validation rejects unsafe IDs, duplicate IDs, malformed data and negative restored sale prices while retaining legacy positive price precision.
+**Data limitation:** the old application already discarded payments older than its embedded fifty-entry window. Code cannot recreate absent evidence. Migrated accounts are marked `historyComplete: false`, with a preserved cutover/opening balance and an owner-visible warning. Recover/reconcile older backups and legacy account refunds before accepting historical statements as complete. Do not replace missing payments with invented records.
 
-## 4. API hardening
+## Verification
 
-Firebase Hosting headers provide CSP, HSTS, MIME, framing, referrer and permission protections. Production CSP allows exact Firebase Auth/token/Firestore endpoints, excludes loopback and inline scripts, and retains inline styles required by the current UI. Development has explicit loopback/HMR allowances. Hosting configuration and preview headers are tested for equality. The dev/preview servers use `cors: false`; protected Firestore requests rely on Auth and rules.
+The four blocker commits each run lint, tests and both Functions syntax/build checks and the Vite production build, including checks after commit. Both root and Functions dependency trees are audited. The final suite contains no tests intentionally accepting a vulnerability.
 
-There is no application server on which Helmet or an Express limiter would run. Firebase supplies server-side Auth abuse limits. The browser cooldown is only a UX control. Project quota adjustments, password policy, email-enumeration protection, authorized domains and App Check enforcement require cloud configuration review; none was silently enabled. See [Firebase Auth limits](https://firebase.google.com/docs/auth/limits).
+Final local results: 60 passing tests (26 domain/deployment, 1 server unit, 33 emulator/rules/callable cases), lint passed, both builds passed, and zero reported vulnerabilities in either dependency tree. The private-credential scan found no private keys/tokens in the working tree or available Git history. Root checks ran on Node 26.13.1; the Functions deployment target remains Node 22 and needs staging verification in that managed runtime.
 
-Application logs contain structured event/code pairs and omit raw errors, customer records, credentials and stacks. Provider failures get safe UI messages. External log collection/alerting is not configured by this source patch.
+Emulator coverage includes:
 
-## 5. Dependencies
+- Staff/anonymous/disabled access, owner escalation, cross-staff expenses, owner-only ledger/payment reads and active/inactive workspace writes.
+- Forged invoice prices/totals, invalid variants/add-ons, stale displayed totals, current credit limits and concurrent checkout retries.
+- Immutable client-denied invoices, payment/ledger documents, original proofs, refund records and sequencing.
+- 55 new retained payments and 60 migrated legacy payments; repeated migration and duplicate legacy source IDs preserve each record without duplication.
+- Read-only plans, invalid/stale sources, tampered plans, migration lock and balance preservation.
+- Uncertain payment IDs surviving retries, edited retries failing closed and storage failures preventing submission.
+- Disabled-by-default refunds, Account reconciliation, cash refunds, simultaneous payment/refund, duplicate refunds and rejection of untrusted legacy proofs.
+- Actual callable HTTP envelopes, Auth-emulator token handling with a loopback user-lookup fixture, role failures and canonical checkout/payment responses. All Firestore operations target the isolated demo emulator, not production.
 
-`npm audit` reported **0 vulnerabilities before and after**, including dev dependencies in the final tree. Compatible updates include Firebase 13.4.0, lucide-react 1.81.0, autoprefixer 10.7.0 and React type patches. Direct dependencies resolve from npm; no hallucinated package was found. All runtime dependencies have source imports. React 18.3.1, Vite 6.4.6, plugin-react 4.7.0 and Tailwind 3.4.19 remain behind current majors; a compatibility migration was not forced into a security patch.
+The standard suites are `npm run test:unit`, `npm run test:functions`, `npm run test:rules`; `npm run verify` adds lint, builds, audits and private-credential scanning. A real signed-in staging browser test of Hosting rewrites and real Google-signed tokens remains part of release validation. Physical printers and actual bank transfers were not tested.
 
-The deployment CLI is managed separately. Rules tests run a pinned, SHA-256-verified official emulator directly, avoiding an unrelated deployment CLI dependency tree in the app. ESLint checks correctness/security patterns; its core unused-variable rule is disabled because it does not track JSX component references. Retained unused-file candidates were checked separately.
+## Manual cutover steps
 
-## 6. AI code smells / unused source
-
-The unsafe automatic owner bootstrap and email heuristic were removed. The default datasets are empty, not a demo catalog. No debug HTTP routes or AI endpoints were found. Empty catches in optional native date pickers/storage fallbacks are deliberate feature recovery rather than authorization bypasses.
-
-Retained, apparently unreferenced components: `src/components/landing/LandingFeaturesModal.jsx`, `src/components/layout/SelectDropdown.jsx`, `src/components/tables/TableManagement.jsx`, and `src/components/pos/TableSelectModal.jsx`. The landing component contains stale walkthrough/compiler/offline-storage claims. Legacy supplier/purchase/raw-material data and backup/reset functions are also retained for compatibility. Confirm whether to keep or remove them; none was deleted or re-enabled.
-
-## 7. Database
-
-Only the brand name is publicly readable by design. Business documents require active operator authorization. Owner access is business-wide; staff are limited to the active workspace, shared operational records and their own cash expenses. Local emulators are loopback-only and always use demo projects; production build flags prevent accidental emulator deployment. Separate cloud projects remain an operator setup step.
-
-**H05–H07 remain:** customer documents expose their embedded ledger to staff; account refunds leave debt unchanged; history drops entries older than 50. Firestore reads return the whole document, so private fields require separate storage/access policy. See [Firestore field access guidance](https://firebase.google.com/docs/firestore/security/rules-fields). Approve an immutable payments/refunds collection, stable customer references and atomic settlement/refund reconciliation with a migration/backfill plan.
-
-Existing expense queries use automatic single-field indexes; no missing composite-index requirement was identified. Consider index exemptions for large QR/array fields as a reviewed database configuration change. Current subscriptions are unbounded, not paginated. Checkout uses a bounded set of transactional reads rather than per-line server queries. Exports deliberately read twice to detect concurrent changes; they are not a substitute for managed backups/PITR.
-
-## 8. Functionality
-
-Traced login → active operator → workspace/config → catalog/customer selection → bill/tender → invoice sequence + customer transaction → receipt → account payment → owner report. Automated tests use actual Firestore rules and production transaction functions, including concurrent credit-limit races and duplicate invoice retries. Counter drafts are validated before use and cleared on sign-out. Customer history recognizes current invoices and India dates. Role-incompatible customer controls are hidden, and failed imports retain retry context. A top-level error boundary handles lazy-load/render failures. Financial views and write actions wait for the first server-confirmed data snapshot, so initial empty caches cannot be exported as zero totals. Sign-out reloads the page to discard the previous operator’s in-memory Firestore data.
-
-Interactive browser smoke test used separate local demo ports 9199/8180 and app port 3001: staff sign-in, customer selection, Account checkout AP-1001, due balance 100 → 125, recording payment 25 → due 100, owner sign-in/reports, hostile `__proto__` category/staff/item names, and sign-out. Existing local services were left running. No production records were changed. Physical printer hardware, actual money transfer, payment-provider confirmation and cloud deployment were not tested.
-
-Table/channel components are not wired into current role navigation; existing access tests explicitly exclude table management. They were preserved instead of changing product scope. README now describes the exposed flows. Whole-import atomicity/recovery also needs an agreed workflow before changing batched import semantics.
-
-## 9. Performance
-
-The production build succeeds without warnings at its configured threshold. Initial entry is ~146.7 kB (~47.5 kB gzip), compared with ~319.3 kB (~83.2 kB gzip) before lazy startup/error containment. The shared Firestore chunk remains ~558.1 kB (~147.8 kB gzip). Views and payment/receipt UI remain lazy-loaded. No external product-photo catalog exists; uploaded QR images are resized/capped.
-
-Financial reports require complete data today. Adding a silent query limit would create incorrect totals. Choose date-scoped pagination, server-side aggregates, retention and a production data-size/load target before larger deployment. Billing load tests were not run against the live project.
-
-## 10. Deployment
-
-`.env.example`, required build-variable validation, sanitized logging, `/health`, a real path 404, favicon and metadata are present. `/health` reports static hosting availability, not backend readiness. Default deploy scripts publish Hosting and Firestore rules together with an explicit CLI project selection. No deployment was performed.
-
-HTTP checks against local production preview: `/` 200, `/health` 200 JSON with `no-store`, unknown path 404, missing asset 404; CSP/HSTS present. Negative builds rejected missing API configuration and emulator mode. Hosting policy JSON matches tested preview policy. Verify the actual published headers/rules after an authorized deployment.
-
-## Verification results
-
-- Every source fix batch ran dependency installation, lint, tests and a production build before committing. The final command is `npm run verify`.
-- Final suites: **24 unit/deployment tests + 19 Firestore tests = 43 passing tests**. **Three are diagnostics that intentionally demonstrate unresolved vulnerabilities**, leaving 40 ordinary regression/behavior checks. Green status does not override the NOT SAFE verdict.
-- `npm audit`: 0 reported vulnerabilities. No Python dependency tree exists, so pip-audit is not applicable.
-- Missing-configuration and production-emulator negative builds failed as expected.
-- Secret scan: no private credentials detected in the working tree (including ignored `.env` and `dist`) or all available commits. Earlier history did not exist in this workspace.
-- Real browser smoke flows and local HTTP behavior are described above. The latest compatible dependency updates also passed the actual transaction suites and production build; the interactive browser run preceded those compatible updates and the final recovery/readiness refinements; the new confirmed-data subscription has a real-emulator regression test.
-
-## Manual auth / IDOR checks
-
-Run `npm run test:rules`. The tests contain concrete cases for anonymous/unprovisioned/disabled access, self-owner creation, staff promotion, operator provisioning, cross-staff expenses, own-UID expense queries, archived workspace access, unauthorized catalog/config writes, direct balance tampering, invoice replay and credit-limit races.
-
-For read-only production verification after publishing rules, set the variables locally from your authorized test accounts; never commit tokens:
+1. Put terminals into maintenance and take a full managed Firestore backup plus an Auth/operator recovery record. Review owner grants, old account balances, discarded-history gaps and legacy refunds. Use a staging project first.
+2. Enable the Firebase **Blaze** plan and required Functions/build services; confirm service-account IAM, budgets/alerts, Auth domains/policies and API restrictions. Functions deployment requires Blaze. See [Firebase deployment prerequisites](https://firebase.google.com/docs/functions/get-started).
+3. Install the reviewed Firebase CLI and dependencies. Root tooling targets Node 24+; deployed Functions use Node 22. Run `npm ci`, `npm ci --prefix functions`, then `npm run verify`.
+4. Create the ignored `functions/.env.PROJECT_ID` from `functions/.env.example`; set approved HTTPS `POS_ALLOWED_ORIGINS` and keep `ENABLE_RECONCILED_REFUNDS=false`. Set the public web build variables in root `.env`/CI for the same project, keeping `VITE_ENABLE_RECONCILED_REFUNDS=false`. Never set emulator endpoints in production.
+5. Publish deny-direct-write rules and deploy the Functions codebase during maintenance, with an explicit project. Do not use the old client for financial operations afterward:
 
 ```sh
-# Expected 403 for staff A reading staff B's expense; 200 for staff A's own expense.
-curl -sS -o /dev/null -w '%{http_code}\n'   -H "Authorization: Bearer ${STAFF_A_ID_TOKEN}"   "https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/posWorkspaces/${WORKSPACE_ID}/expenses/${STAFF_B_EXPENSE_ID}"
-
-# Expected denial without authentication.
-curl -sS -o /dev/null -w '%{http_code}\n'   "https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/posConfig/current"
-
-curl -i "https://${POS_DOMAIN}/health"
-curl -I "https://${POS_DOMAIN}/"
-curl -I "https://${POS_DOMAIN}/does-not-exist"
+firebase deploy --only firestore:rules --project PROJECT_ID
+firebase deploy --only functions:financial --project PROJECT_ID
 ```
 
-Write-based attack diagnostics are confined to the isolated demo test runner.
+6. With administrator ADC credentials, generate and review a dry-run plan. These are manual commands; they were not run against production:
 
-## Needs your input
+```sh
+node functions/scripts/migrate-payments.js --project PROJECT_ID --workspace WORKSPACE_ID --dry-run --out .migration-reports/review.json
+# Inspect all errors, completeness warnings, balances and backup/reconciliation evidence.
+node functions/scripts/migrate-payments.js --project PROJECT_ID --workspace WORKSPACE_ID --apply --plan .migration-reports/review.json --ack-backup --confirm-project PROJECT_ID
+```
 
-1. **Release blocker, H04:** choose/approve a trusted settlement API (for example Firebase Functions or an existing server) or a new line-document schema. Validate catalog/custom-item policy, discounts, every line and all derived amounts on the server; retain idempotency and atomic customer/table updates.
-2. **Release blockers, H05–H07:** decide staff visibility, approve a durable immutable payments/refunds schema with stable customer IDs and migration/backfill, and define atomic Account/Credit refund behavior. Keep manual refunds disabled pending reconciliation.
-3. Choose scale/retention/report aggregation targets and whole-import atomicity/recovery semantics before schema/workflow changes. Decide a major framework/tooling upgrade plan separately.
-4. Review cloud-side Auth/API restrictions, abuse controls, production ownership, backup/PITR, monitoring and domain/HTTPS. Their current state was not available locally; new paid services were not configured.
-5. Keep or remove the listed unused components/legacy features? Provide earlier repository history if historical secret verification is required.
+7. After every customer has migrated and `config/financialMigration.status` is `ready`, build and publish Hosting with the matching API rewrites:
 
-## Manual deployment steps
+```sh
+npm run build
+firebase deploy --only hosting --project PROJECT_ID
+```
 
-1. Resolve H04–H07 and rerun the known-blocker diagnostics with expectations changed to secure behavior. Review existing operator owner grants and revoke unapproved access through a trusted Firebase administrator. Create the legitimate owner profile manually if needed.
-2. Set the required public Firebase build variables in the production build host/CI; use a separate staging project. Restrict the public API key, required APIs and approved origins. Enable the intended Auth password/enumeration/abuse protections. No private secret was found to rotate; rotate any abused or previously leaked keys discovered in unavailable history.
-3. Enable managed backups/PITR as appropriate, set retention and billing/security alerts, and perform a restore drill. Configure centralized error monitoring if desired.
-4. Connect the production domain, verify Firebase-managed HTTPS/SSL, run `npm run verify`, and deploy both Hosting and Firestore rules using an explicit production project. Review shared-project rules before replacing them.
-5. Repeat the read-only auth/IDOR and HTTP checks above against the deployed project. Monitor `/health` as static availability plus a separate authenticated backend probe when one is implemented.
+8. Reload/clear old terminal site data during rollout. Test real owner/staff sign-in, checkout, payment retry, staff ledger denial and direct-write denial. Check private payment counts and current balances against the reviewed plan and backup. Verify `/health`, HTTP security headers, domain/SSL and alerts before reopening terminals.
+9. Keep refunds disabled. Only after dataset reconciliation and staging acceptance should a trusted administrator separately enable the trusted server refund flag, publish a browser build with `VITE_ENABLE_RECONCILED_REFUNDS=true`, and enable the owner staff-refund preference. Redeploy Functions and Hosting for that explicit rollout. Account refunds create customer credit; they do not issue bank payouts.
 
-## Commits made
+## Commits for the four blockers
 
 ```text
-58594fe chore: snapshot codebase before production audit
-ed1d253 fix(auth): prevent owner self-provisioning and fail closed on profile errors
-f34e785 fix(database): validate financial writes and enforce checkout credit limits
-91e49b9 fix(reports): isolate aggregation keys from object prototypes
-cdead2b fix(input): bound CSV imports and neutralize spreadsheet formulas
-e4555ec fix(runtime): recover from corrupt drafts and contain shared-terminal sessions
-2d4e969 fix(deploy): enforce production config and secure static hosting
-d2a3367 fix(customers): align account forms with enforced operator permissions
-8684f9a chore(deps): update compatible packages and retain a clean audit
-4ba5c89 test(security): verify auth boundaries and document unresolved financial risks
-845c606 fix(validation): reject invalid currency and align credential entry limits
-2b25d43 docs: record production audit findings and deployment blockers
-87c1ce5 fix(auth): surface lost operator verification without restoring cached access
+897444e fix(H04): move checkout into trusted catalog-priced callable transactions
+1eb69d8 fix(H05): isolate owner financial data and add reviewed legacy migration
+8647a69 fix(H07): record append-only payments with durable idempotent history
 ```
 
-The complete list, including this final readiness follow-up, is available in the chat response / `git log`.
+The final H06 commit contains refund reconciliation, disabled-default enforcement, regression coverage and these updated cutover instructions; its hash is reported in the chat / `git log`.
 
-**Final verdict: NOT SAFE TO DEPLOY.** Remaining release blockers are trusted invoice validation, owner-only ledger isolation and durable financial history. Account/Credit refund reconciliation must also be resolved before enabling manual refunds. Local verification cannot certify the uninspected live Firebase configuration or unavailable earlier Git history.
+## Remaining blockers and follow-up
+
+**No known remaining code blockers in H04–H07.** Production is still gated on Blaze/Functions configuration, rules publication, a reviewed and reconciled migration, and signed-in staging validation. Missing historical payments and pre-cutover refund errors require real backup/accounting evidence; migration intentionally does not fabricate corrections.
+
+Previously identified follow-up remains: query pagination/server aggregates at larger scale, catalog bulk-import recovery, major frontend upgrades, retained unused components and provider-side abuse/App Check/monitoring configuration. See the initial full audit at `git show 7d6b534:PRODUCTION_AUDIT.md`. None of these decisions was silently changed by this four-blocker follow-up.
+
+**Final verdict: code is ready for staging; NOT SAFE for an unattended production deployment until the manual cutover is completed.** No deployment or production migration occurred in this task.

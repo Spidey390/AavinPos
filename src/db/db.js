@@ -123,7 +123,13 @@ export async function exportDatabaseJSON(workspace) {
       const [ledger, payments] = await Promise.all(['ledger', 'payments'].map(name => getDocsFromServer(collection(account.ref, name))));
       return { id: account.id, account: account.data(), ledger: ledger.docs.map(item => item.data()), payments: payments.docs.map(item => item.data()) };
     }));
-    return { rows: Object.fromEntries(results), financialRecords, settings: settings.data(), next: next.data()?.next ?? 1 };
+    const proofs = await getDocsFromServer(store(workspace, 'financialInvoices'));
+    const financialInvoices = await Promise.all(proofs.docs.map(async invoice => {
+      const [payments, refunds] = await Promise.all(['payments', 'refunds'].map(name => getDocsFromServer(collection(invoice.ref, name))));
+      return { id: invoice.id, invoice: invoice.data(), payments: payments.docs.map(item => item.data()), refunds: refunds.docs.map(item => item.data()) };
+    }));
+    const operations = await getDocsFromServer(store(workspace, 'financialOperations'));
+    return { rows: Object.fromEntries(results), financialRecords, financialInvoices, financialOperations: operations.docs.map(item => ({ ...item.data(), id: item.id })), settings: settings.data(), next: next.data()?.next ?? 1 };
   }
   const snapshot = await readAll();
   const confirmation = await readAll();
@@ -132,7 +138,7 @@ export async function exportDatabaseJSON(workspace) {
     throw new Error('Records changed during export. Pause edits briefly and retry.');
   }
   return {
-    database: 'BrewBitePOS_DB_v2', version: 2, financialRecords: snapshot.financialRecords, exportedAt: new Date().toISOString(),
+    database: 'BrewBitePOS_DB_v2', version: 2, financialRecords: snapshot.financialRecords, financialInvoices: snapshot.financialInvoices, financialOperations: snapshot.financialOperations, exportedAt: new Date().toISOString(),
     settings: snapshot.settings, ...snapshot.rows,
     sequences: [{ id: 'cloud', next: snapshot.next }]
   };
@@ -363,18 +369,8 @@ export function recordCustomerAccountPayment(workspace, customerId, payment) {
   return callFinancialOnce('recordPayment', { workspace, customerId, amount: payment.amount, method: payment.method ?? 'Cash', referenceNo: payment.referenceNo ?? '', notes: payment.notes ?? '' });
 }
 
-export function refundOrder(workspace, order, refund) {
-  const ref = row(workspace, 'orders', order.id);
-  return runTransaction(firestore, async transaction => {
-    const current = (await transaction.get(ref)).data();
-    const settings = (await transaction.get(config(workspace))).data();
-    if (!settings?.allowStaffRefunds) throw new Error('Ask the owner to enable recording refunds.');
-    if (!current || current.status !== 'Completed' || current.refund) {
-      throw new Error('This invoice is unavailable or already refunded.');
-    }
-    transaction.update(ref, { refund: { ...refund, amount: current.total } });
-  });
-}
+export const refundOrder = (workspace, order, refund) => callFinancialOnce('refund', { workspace, orderId: order.id, reason: refund.reason });
+
 
 export async function loadCustomerLedger(workspace, customerId, cursor = null) {
   const ledger = collection(firestore, 'posWorkspaces', workspace, 'customerAccounts', customerId, 'ledger');

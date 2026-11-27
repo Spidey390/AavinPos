@@ -5,6 +5,7 @@ import { isUpiQrImage } from '../../domain/upi';
 import { sanitizeText } from '../../domain/sanitize';
 import ToggleSwitch from '../layout/ToggleSwitch';
 import Select from '../layout/Select';
+import { refundsUIEnabled } from '../../services/functions';
 
 const field = 'min-h-11 w-full min-w-0 rounded-xl border border-[#263143] bg-[#121620] px-3 py-2 text-base text-white sm:text-sm';
 const acceptedQrTypes = ['image/png', 'image/jpeg', 'image/webp'];
@@ -258,8 +259,8 @@ export default function CafeSettings() {
               <h3 id="pos-preferences" className="text-sm font-bold text-white">POS preferences</h3>
               <div className="divide-y divide-[#232b3a] rounded-xl border border-[#232b3a] bg-[#121620]">
                 <PreferenceRow icon={RotateCcw} title="Staff refunds"
-                  description="Let staff record full refunds after returning the payment."
-                  checked={Boolean(formData.allowStaffRefunds)} disabled={busy}
+                  description={refundsUIEnabled ? 'Let staff record full refunds or credit customer accounts.' : 'Refunds are unavailable pending administrator reconciliation and rollout.'}
+                  checked={refundsUIEnabled && Boolean(formData.allowStaffRefunds)} disabled={busy || !refundsUIEnabled}
                   onChange={value => handleChange('allowStaffRefunds', value)} />
                 <PreferenceRow icon={Volume2} title="POS sounds"
                   description="Play sounds when adding items and completing checkout."
