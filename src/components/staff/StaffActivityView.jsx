@@ -4,9 +4,14 @@ import StaffAttendanceView from './StaffAttendanceView';
 const money = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 });
 const loginFormat = new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true });
 const loginTime = value => value && Number.isFinite(Date.parse(value)) ? loginFormat.format(new Date(value)) : 'Not recorded yet';
+const updateFormat = new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: true });
+const updateTime = value => value && Number.isFinite(Date.parse(value)) ? updateFormat.format(new Date(value)) : 'Not recorded yet';
+const dateFormat = new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' });
+const reportDate = value => dateFormat.format(new Date(`${value}T12:00:00+05:30`));
 const amount = value => typeof value === 'number' && Number.isFinite(value) ? money.format(value) : '—';
 
 export default function StaffActivityView({ report, loading, error, start, end, rangeMode, onRangeChange, onStartChange, onEndChange, onApply, onToday }) {
+  const unappliedDates = report && (report.period.start !== start || report.period.end !== end);
   return (
     <section aria-labelledby="staff-activity-title" className="space-y-4 rounded-xl border border-slate-700 bg-[#171c26] p-4 sm:p-5">
       <div>
@@ -16,11 +21,11 @@ export default function StaffActivityView({ report, loading, error, start, end, 
       <form onSubmit={onApply} className="flex flex-wrap items-end gap-3">
         <label className="w-full min-w-0 text-sm sm:w-auto sm:max-w-48 sm:flex-1">{rangeMode ? 'From' : 'Selected day'}
           <input type="date" required value={start} onChange={event => onStartChange(event.target.value)}
-            className="mt-1 min-h-11 w-full min-w-0 rounded-lg border border-slate-600 bg-[#121620] px-3 py-2 text-white" />
+            className="mt-1 min-h-11 w-full min-w-0 rounded-lg border border-slate-600 bg-[#121620] px-3 py-2 text-white [color-scheme:dark]" />
         </label>
         {rangeMode && <label className="w-full min-w-0 text-sm sm:w-auto sm:max-w-48 sm:flex-1">To
           <input type="date" required value={end} onChange={event => onEndChange(event.target.value)}
-            className="mt-1 min-h-11 w-full min-w-0 rounded-lg border border-slate-600 bg-[#121620] px-3 py-2 text-white" />
+            className="mt-1 min-h-11 w-full min-w-0 rounded-lg border border-slate-600 bg-[#121620] px-3 py-2 text-white [color-scheme:dark]" />
         </label>}
         <button type="submit" disabled={loading} className="min-h-11 rounded-lg bg-orange-700 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-600 disabled:opacity-60">
           {loading ? 'Loading…' : 'Apply / Refresh'}
@@ -33,8 +38,8 @@ export default function StaffActivityView({ report, loading, error, start, end, 
       {!loading && !error && report && (
         <>
           <div className="flex flex-wrap justify-between gap-2 text-xs text-slate-400">
-            <span>{report.period.start} to {report.period.end} · India time</span>
-            <span>Updated {loginTime(report.generatedAt)}</span>
+            <span>{unappliedDates ? `Showing ${reportDate(report.period.start)}${report.period.start === report.period.end ? '' : ` to ${reportDate(report.period.end)}`} · Apply to update` : 'India time'}</span>
+            <span title={loginTime(report.generatedAt)}>Updated {updateTime(report.generatedAt)}</span>
           </div>
           {report.cashState === 'migration-required' && <p role="status" className="rounded-lg border border-amber-700/60 bg-amber-950/20 p-3 text-sm text-amber-200">Sales, expenses and recorded login times are available. Cash balances and billing require the reviewed financial migration before they can be used.</p>}
           {report.cashState === 'index-required' && <p role="status" className="rounded-lg border border-amber-700/60 bg-amber-950/20 p-3 text-sm text-amber-200">Sales, expenses and recorded login times are available. Cash reporting is waiting for the payment-history index. Publish the report indexes, wait for them to finish building, then refresh.</p>}

@@ -15,16 +15,16 @@ export default function StaffAttendanceView({ attendance, singleDay }) {
   return (
     <div className="mt-4 space-y-4 border-t border-slate-700/70 pt-4">
       <dl className="grid grid-cols-2 gap-4">
-        <div><dt className="text-xs text-slate-400">Working hours today</dt><dd className="mt-1 text-xl font-bold tabular-nums text-white">{workingTime(attendance.today.workingMs)}</dd><dd className="mt-1 text-xs text-slate-400">{date.format(new Date(`${attendance.today.date}T12:00:00+05:30`))}</dd></div>
+        <div><dt className="text-xs text-slate-400">Working hours today</dt><dd className="mt-1 text-xl font-bold tabular-nums text-white">{workingTime(attendance.today.workingMs)}</dd></div>
         <div><dt className="text-xs text-slate-400">{singleDay ? 'Selected day’s hours' : 'Selected period’s hours'}</dt><dd className="mt-1 text-xl font-bold tabular-nums text-orange-300">{workingTime(attendance.workingMs)}</dd></div>
       </dl>
       <div className="space-y-4">
         {attendance.days.map(day => (
           <div key={day.date}>
-            <div className="mb-2 flex flex-wrap justify-between gap-2 text-xs text-slate-300">
+            {!singleDay && <div className="mb-2 flex flex-wrap justify-between gap-2 text-xs text-slate-300">
               <h4 className="font-semibold">{date.format(new Date(`${day.date}T12:00:00+05:30`))}</h4>
               <span>{workingTime(day.workingMs)} total</span>
-            </div>
+            </div>}
             {!day.sessions.length ? <p className="text-xs text-slate-400">No sessions recorded for this day.</p> : (
               <div className="space-y-2">
                 {day.sessions.map(session => (
