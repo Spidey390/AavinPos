@@ -302,3 +302,24 @@ test('customer accounts system validates tender, credit limits and statement sum
 });
 
 
+
+
+test('uncertain payment requests retain the same operation ID across retries', async () => {
+  const { runPaymentIntent } = await import('../src/domain/paymentIntent.js');
+  const rows = new Map(), operations = [];
+  const storage = { getItem: key => rows.get(key), setItem: (key, value) => rows.set(key, value), removeItem: key => rows.delete(key) };
+  const payload = { amount: 25, customerId: 'c1' };
+  await assert.rejects(runPaymentIntent({ storage, uid: 'staff', payload, call: async operation => { operations.push(operation); throw new Error('lost response'); } }));
+  assert.equal(rows.size, 1);
+  let changedCalled = false;
+  await assert.rejects(runPaymentIntent({ storage, uid: 'staff', payload: { ...payload, amount: 30 }, call: async () => { changedCalled = true; } }), /uncertain/);
+  assert.equal(changedCalled, false);
+  await runPaymentIntent({ storage, uid: 'staff', payload, call: async operation => { operations.push(operation); return {}; } });
+  assert.equal(operations[0], operations[1]);
+  assert.equal(rows.size, 0);
+  await runPaymentIntent({ storage, uid: 'staff', payload, call: async operation => { operations.push(operation); return {}; } });
+  assert.notEqual(operations[1], operations[2]);
+  let called = false;
+  await assert.rejects(runPaymentIntent({ storage: { getItem() { throw new Error('blocked'); } }, uid: 'staff', payload, call: async () => { called = true; } }));
+  assert.equal(called, false);
+});

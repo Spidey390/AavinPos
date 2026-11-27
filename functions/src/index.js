@@ -21,3 +21,5 @@ export const initializeWorkspace = callable('initializeWorkspace');
 
 export const saveCustomer = callable('saveCustomer');
 export const archiveCustomer = callable('archiveCustomer');
+
+export const recordPayment = callable('recordPayment');

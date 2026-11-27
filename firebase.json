@@ -42,6 +42,13 @@
           "functionId": "archiveCustomer",
           "region": "asia-south1"
         }
+      },
+      {
+        "source": "/api/recordPayment",
+        "function": {
+          "functionId": "recordPayment",
+          "region": "asia-south1"
+        }
       }
     ],
     "headers": [

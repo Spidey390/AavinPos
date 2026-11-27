@@ -118,6 +118,7 @@ export function createFinancialService(db) {
       if (credit && !customer) fail('failed-precondition', 'Choose a customer account.');
       const oldDue = customer ? cents(customer.dueBalance ?? 0, true) : 0;
       const due = oldDue + (credit ? total : 0);
+      cents(due / 100, true);
       if (credit && account.creditLimit > 0 && due > cents(account.creditLimit)) fail('failed-precondition', 'The bill exceeds the current credit limit.');
       const number = Math.max(sequence.next, settings.startingNumber);
       if (!Number.isSafeInteger(number) || number >= Number.MAX_SAFE_INTEGER || !Number.isSafeInteger(sequence.count)) fail('failed-precondition', 'Invoice sequence is invalid.');
@@ -189,6 +190,42 @@ export function createFinancialService(db) {
       return summary;
     });
   }
+  async function recordPayment(request) {
+    const data = request.data;
+    object(data, ['workspace', 'customerId', 'idempotencyKey', 'amount', 'method', 'referenceNo', 'notes']);
+    if (!id(data.customerId) || !id(data.idempotencyKey)) fail('invalid-argument', 'Invalid payment identifiers.');
+    const amount = cents(data.amount);
+    if (amount <= 0 || !['Cash', 'UPI', 'Card'].includes(data.method)) fail('invalid-argument', 'Choose a positive amount and Cash, UPI or Card.');
+    const normalized = { workspace: data.workspace, customerId: data.customerId, amount: amount / 100, method: data.method, referenceNo: text(data.referenceNo, 120), notes: text(data.notes, 500) };
+    const hash = fingerprint(normalized);
+    return db.runTransaction(async tx => {
+      const operator = await access(tx, request, data.workspace, ['owner', 'staff']);
+      const operationRef = row(data.workspace, 'financialOperations', data.idempotencyKey);
+      const previous = (await tx.get(operationRef)).data();
+      if (previous) {
+        if (previous.type !== 'payment' || previous.uid !== operator.uid || previous.requestHash !== hash) fail('already-exists', 'This operation ID was already used.');
+        return previous.result;
+      }
+      const customerRef = row(data.workspace, 'customers', data.customerId), accountRef = row(data.workspace, 'customerAccounts', data.customerId);
+      const customer = (await tx.get(customerRef)).data(), account = (await tx.get(accountRef)).data();
+      if (!customer || customer.archived) fail('not-found', 'Customer not found.');
+      if (customer.financialSchema !== 2 || account?.status !== 'ready') fail('failed-precondition', 'Customer migration is required.');
+      const before = cents(customer.dueBalance, true), after = before - amount;
+      cents(after / 100, true);
+      const applyRate = await throttle(tx, operator.uid, 'payment');
+      const date = new Date().toISOString(), paymentId = `payment-${data.idempotencyKey}`;
+      const result = { id: paymentId, amount: amount / 100, dueBalance: after / 100 };
+      const entry = { id: paymentId, type: 'payment', date, amount: amount / 100, method: data.method,
+        referenceNo: normalized.referenceNo, notes: normalized.notes, balanceBefore: before / 100, balanceAfter: after / 100, recordedBy: operator.uid };
+      applyRate();
+      tx.create(accountRef.collection('payments').doc(paymentId), entry);
+      tx.create(accountRef.collection('ledger').doc(paymentId), entry);
+      tx.create(operationRef, { type: 'payment', uid: operator.uid, requestHash: hash, result });
+      tx.update(customerRef, { dueBalance: after / 100 });
+      tx.update(accountRef, { lastPaymentAt: date, lastPaymentAmount: amount / 100 });
+      return result;
+    });
+  }
   async function archiveCustomer(request) {
     object(request.data, ['workspace', 'customerId']);
     if (!id(request.data.customerId)) fail('invalid-argument', 'Invalid customer ID.');
@@ -201,5 +238,5 @@ export function createFinancialService(db) {
       return { archived: true };
     });
   }
-  return { checkout, initializeWorkspace, saveCustomer, archiveCustomer };
+  return { checkout, initializeWorkspace, saveCustomer, archiveCustomer, recordPayment };
 }

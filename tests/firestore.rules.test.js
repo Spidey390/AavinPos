@@ -32,7 +32,7 @@ before(async () => {
     name: 'local-rules-test-database',
     enforce: 'pre',
     load(id) {
-      if (id.endsWith('/src/services/functions.js')) return 'export const callFinancial = globalThis.__callFinancial;';
+      if (id.endsWith('/src/services/functions.js')) return 'export const callFinancial = globalThis.__callFinancial; export const callFinancialOnce = (name, data) => globalThis.__callFinancial(name, { ...data, idempotencyKey: crypto.randomUUID() });';
       if (id.endsWith('/src/services/firebase.js')) return 'export const firestore = globalThis.__posTestFirestore;';
     }
   }] });
@@ -317,8 +317,34 @@ test('concurrent real account checkouts respect the current credit limit', async
   assert.equal(customer.ordersCount, 2);
 });
 
-test('direct payment recording is closed while the callable payment service is introduced', () => {
-  assert.throws(() => database.recordCustomerAccountPayment('live', 'c1', { amount: 12.50, method: 'UPI' }), /callable payment service/);
+test('payments are immutable documents with no 50-entry retention cap', async () => {
+  for (let index = 0; index < 55; index++) await invoke('recordPayment', { workspace: 'live', customerId: 'c1', idempotencyKey: `pay-${index}`, amount: 1, method: 'Cash' });
+  const admin = getAdminFirestore(adminApp);
+  const payments = await admin.collection('posWorkspaces/live/customerAccounts/c1/payments').get();
+  const ledger = await admin.collection('posWorkspaces/live/customerAccounts/c1/ledger').get();
+  assert.equal(payments.size, 55);
+  assert.equal(ledger.size, 55);
+  assert.equal((await admin.doc('posWorkspaces/live/customers/c1').get()).data().dueBalance, 45);
+  for (const uid of ['staff-a', 'owner']) {
+    const db = dbFor(uid);
+    await assertFails(setDoc(doc(db, 'posWorkspaces/live/customerAccounts/c1/payments/forged'), { amount: 1 }));
+    await assertFails(updateDoc(doc(db, 'posWorkspaces/live/customerAccounts/c1/payments/payment-pay-0'), { amount: 0 }));
+    await assertFails(setDoc(doc(db, 'posWorkspaces/live/customerAccounts/c1/ledger/forged'), { amount: 1 }));
+  }
+  await assertFails(getDocs(collection(dbFor('staff-a'), 'posWorkspaces/live/customerAccounts/c1/payments')));
+});
+
+test('payment retries are idempotent, conflict-safe and reject forged balances', async () => {
+  const data = { workspace: 'live', customerId: 'c1', idempotencyKey: 'safe-retry', amount: 20, method: 'UPI' };
+  const results = await Promise.all([invoke('recordPayment', data), invoke('recordPayment', data)]);
+  assert.deepEqual(results[0], results[1]);
+  assert.equal(results[0].dueBalance, 80);
+  await assert.rejects(invoke('recordPayment', { ...data, amount: 50 }), { code: 'already-exists' });
+  await assert.rejects(invoke('recordPayment', { ...data, balanceAfter: 0 }), { code: 'invalid-argument' });
+  await assert.rejects(invoke('recordPayment', { ...data, idempotencyKey: 'bad-amount', amount: 1.001 }), { code: 'invalid-argument' });
+  for (const uid of [null, 'disabled', 'stranger']) await assert.rejects(invoke('recordPayment', data, uid));
+  const owner = await invoke('recordPayment', { ...data, idempotencyKey: 'owner-payment', amount: 10 }, 'owner');
+  assert.equal(owner.dueBalance, 70);
 });
 
 test('data subscriptions wait for the server instead of emitting an empty initial cache', { timeout: 5000 }, async () => {
@@ -342,4 +368,17 @@ test('stale migration plans fail closed without changing customer balances', asy
   assert.equal((await ref.get()).data().dueBalance, 10);
   assert.equal((await admin.doc('posWorkspaces/live/config/financialMigration').get()).data().status, 'migrating');
   await assert.rejects(invoke('checkout', checkoutData()), { code: 'failed-precondition' });
+});
+
+
+test('migration preserves more than fifty legacy payments and duplicate legacy IDs', async () => {
+  const admin = getAdminFirestore(adminApp);
+  await admin.doc('posWorkspaces/live/customers/long-history').set({ id: 'long-history', name: 'Legacy', phone: '+919000000005', dueBalance: 40,
+    accountTransactions: Array.from({ length: 60 }, (_, index) => ({ id: 'duplicate-legacy-id', type: 'payment', date: '2026-11-25T00:00:00.000Z', amount: 1, method: 'Cash', balanceAfter: 99 - index })) });
+  const plan = await planMigration(admin, projectId, 'live');
+  assert.equal(plan.errors.length, 0);
+  await applyMigration(admin, projectId, plan);
+  await applyMigration(admin, projectId, plan);
+  assert.equal((await admin.collection('posWorkspaces/live/customerAccounts/long-history/payments').get()).size, 60);
+  assert.equal((await admin.doc('posWorkspaces/live/customers/long-history').get()).data().dueBalance, 40);
 });

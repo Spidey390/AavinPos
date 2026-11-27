@@ -47,7 +47,9 @@ export function prepareCustomer(snapshot) {
   const summary = Object.fromEntries(publicFields.filter(key => key in data).map(key => [key, data[key]]));
   Object.assign(summary, { id: snapshot.id, financialSchema: 2, archived: data.archived ?? false, ordersCount: data.ordersCount ?? 0, totalSpent: data.totalSpent ?? 0, avgOrderValue: data.avgOrderValue ?? 0, dueBalance: data.dueBalance ?? 0 });
   const legacyFields = Object.fromEntries(Object.entries(data).filter(([key]) => !publicFields.includes(key) && !['creditLimit', 'accountTransactions'].includes(key)));
-  return { summary, entries, privateData: { status: 'ready', creditLimit: data.creditLimit ?? 0, openingBalance, historyComplete: false, legacyFields } };
+  const privateData = { status: 'ready', creditLimit: data.creditLimit ?? 0, openingBalance, historyComplete: false, legacyFields };
+  if ([privateData, ...entries].some(value => Buffer.byteLength(JSON.stringify(value)) > 750000)) throw new Error('Legacy record exceeds the safe document size; administrator review is required.');
+  return { summary, entries, privateData };
 }
 
 export async function planMigration(db, projectId, workspace) {

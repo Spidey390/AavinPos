@@ -1,4 +1,4 @@
-import { callFinancial } from '../services/functions';
+import { callFinancial, callFinancialOnce } from '../services/functions';
 import {
   collection, doc, getDocFromServer, getDocsFromServer, onSnapshot,
   runTransaction, writeBatch, query, where, orderBy, limit, startAfter
@@ -359,7 +359,9 @@ export function executeOrderTransaction(workspace, { order, tableRevision, custo
   });
 }
 
-export const recordCustomerAccountPayment = () => { throw new Error('Payment recording requires the callable payment service.'); };
+export function recordCustomerAccountPayment(workspace, customerId, payment) {
+  return callFinancialOnce('recordPayment', { workspace, customerId, amount: payment.amount, method: payment.method ?? 'Cash', referenceNo: payment.referenceNo ?? '', notes: payment.notes ?? '' });
+}
 
 export function refundOrder(workspace, order, refund) {
   const ref = row(workspace, 'orders', order.id);
