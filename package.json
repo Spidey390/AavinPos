@@ -8,15 +8,17 @@
     "build": "npm run build:functions && vite build",
     "preview": "vite preview",
     "test": "npm run test:unit && npm run test:functions && npm run test:rules",
-    "deploy": "npm run build && firebase deploy --only functions:financial,hosting,firestore:rules",
-    "deploy:all": "npm run build && firebase deploy --only functions:financial,hosting,firestore:rules",
+    "deploy": "node scripts/deploy-guidance.js",
+    "deploy:all": "node scripts/deploy-guidance.js",
     "lint": "eslint . --max-warnings=0",
     "test:unit": "node --test tests/domain.test.js tests/deployment.test.js",
     "test:rules": "node scripts/test-rules.js",
     "check:secrets": "node scripts/check-secrets.js",
     "verify": "npm run lint && npm test && npm run build && npm audit && npm --prefix functions audit && npm run check:secrets",
     "build:functions": "npm --prefix functions run build",
-    "test:functions": "npm --prefix functions test"
+    "test:functions": "npm --prefix functions test",
+    "start": "node --env-file-if-exists=server.env functions/src/server.js",
+    "deploy:rules": "firebase deploy --only firestore:rules"
   },
   "dependencies": {
     "canvas-confetti": "^1.9.4",

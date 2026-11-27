@@ -4,6 +4,16 @@ All four approved code blockers are resolved on `prod-hardening`. No Functions d
 
 **Production verdict: NOT SAFE TO DEPLOY directly without the manual cutover.** There are no known remaining code blockers within H04–H07. A local emulator cannot certify historical production balances, missing legacy payments, deployed IAM/rules or domain configuration.
 
+## Selected free hosting update
+
+The user selected **a separate free hosted backend**, keeping Firebase Spark. `functions/src/server.js` now serves the built UI plus the same SDK-authenticated `/api/*` handlers on a Node web service. `render.yaml` selects Render Free with automatic future deployments off. The financial transaction service, all four blocker fixes and Firestore client-write denials are preserved. No credential upload or new IAM grant was made. See [FREE_HOSTING.md](FREE_HOSTING.md) for the selected cutover; the Blaze instructions later in this report are now an optional alternative.
+
+The standalone host adds bounded JSON parsing, a bounded pre-auth IP limiter, exact origin checks, shared security headers, static file isolation, curated errors, `/health`, project/build/credential checks and graceful shutdown. Actual callable HTTP emulator tests now use this production HTTP adapter. All persistent financial state remains in Firestore across free-host restarts.
+
+A Spark-compatible administrator snapshot CLI reads typed Firestore REST documents at one recent fixed read time, traverses private nested collections, writes a private digest-verified local file, and never writes to Firestore. It is not a managed backup; restoration to staging and separate Auth/rules/index/IAM recovery remain manual release gates. No production backup or migration was run.
+
+**Free hosting limitation:** [Render's free service documentation](https://render.com/docs/free) explicitly recommends these instances for previews rather than production. Sleep, wake-up delay, quotas and possible suspension are remaining live-billing availability risks. The code is ready for a free staging rehearsal; the production verdict remains NOT SAFE until migration/recovery, real staging acceptance and availability requirements are resolved. No paid plan was activated.
+
 ## Updated before / after table
 
 | Blocker | Severity | Before | Current result | Source |
@@ -15,7 +25,7 @@ All four approved code blockers are resolved on `prod-hardening`. No Functions d
 
 ## Server financial contract
 
-Callable exports: `checkout`, `recordPayment`, `refund`, `initializeWorkspace`, `saveCustomer`, `archiveCustomer`. They run in `asia-south1`, Node.js 22, with bounded request size, 10 maximum instances and concurrency 1 per instance. Protected mutations re-read the active operator and workspace migration gate in each Firestore transaction. Financial mutations are throttled per operator/action. Errors expose curated messages, not stacks. Hosting rewrites `/api/<name>` to the callables, so the browser CSP continues using same-origin API access. Production CORS is configured through `POS_ALLOWED_ORIGINS`.
+Callable exports: `checkout`, `recordPayment`, `refund`, `initializeWorkspace`, `saveCustomer`, `archiveCustomer`. On the optional Cloud Functions target they run in `asia-south1`, Node.js 22, with 10 maximum instances and concurrency 1. The selected standalone Render host uses Node 24 and its free instance limits; both use bounded requests and the same authenticated transaction handlers. Protected mutations re-read the active operator and workspace migration gate in each Firestore transaction. Financial mutations are throttled per operator/action. Errors expose curated messages, not stacks. The standalone host serves `/api/<name>` directly; optional Firebase Hosting rewrites target Cloud Functions. Both retain same-origin browser API access. Production CORS is configured through `POS_ALLOWED_ORIGINS`.
 
 Checkout accepts product IDs, variant/add-on selections, quantity, notes, channel, customer/table references, requested discount percentage and tender details. It rejects caller-supplied price/total/merchant/cashier fields. Catalog prices and settings come from Firestore. An optional expected total is only a stale-screen assertion; it never determines the amount. Unknown/custom-priced items require owner catalog creation. Limits are 100 lines, 25 add-ons per line and two-decimal currency. Cash/UPI/card receipts remain manual operator assertions; no payment-provider capture/webhook was added.
 
@@ -55,7 +65,7 @@ Ledger/credit fields move off staff-readable documents before they become versio
 
 The four blocker commits each run lint, tests and both Functions syntax/build checks and the Vite production build, including checks after commit. Both root and Functions dependency trees are audited. The final suite contains no tests intentionally accepting a vulnerability.
 
-Final local results: 60 passing tests (26 domain/deployment, 1 server unit, 33 emulator/rules/callable cases), lint passed, both builds passed, and zero reported vulnerabilities in either dependency tree. The private-credential scan found no private keys/tokens in the working tree or available Git history. Root checks ran on Node 26.13.1; the Functions deployment target remains Node 22 and needs staging verification in that managed runtime.
+Before the free-host follow-up, local results were 60 passing tests (26 domain/deployment, 1 server unit, 33 emulator/rules/callable cases), lint passed, both builds passed, and zero reported vulnerabilities in either dependency tree. The private-credential scan found no private keys/tokens in the working tree or available Git history. Root checks ran on Node 26.13.1; the Functions deployment target remains Node 22 and needs staging verification in that managed runtime.
 
 Emulator coverage includes:
 
@@ -71,6 +81,8 @@ Emulator coverage includes:
 The standard suites are `npm run test:unit`, `npm run test:functions`, `npm run test:rules`; `npm run verify` adds lint, builds, audits and private-credential scanning. A real signed-in staging browser test of Hosting rewrites and real Google-signed tokens remains part of release validation. Physical printers and actual bank transfers were not tested.
 
 ## Manual cutover steps
+
+**Optional Blaze route only.** For the selected free Spark/Render route, follow [FREE_HOSTING.md](FREE_HOSTING.md), including its local backup and manual credential requirements. Do not enable billing or deploy Functions for the free route.
 
 1. Put terminals into maintenance and take a full managed Firestore backup plus an Auth/operator recovery record. Review owner grants, old account balances, discarded-history gaps and legacy refunds. Use a staging project first.
 2. Enable the Firebase **Blaze** plan and required Functions/build services; confirm service-account IAM, budgets/alerts, Auth domains/policies and API restrictions. Functions deployment requires Blaze. See [Firebase deployment prerequisites](https://firebase.google.com/docs/functions/get-started).
@@ -113,7 +125,7 @@ The final H06 commit contains refund reconciliation, disabled-default enforcemen
 
 ## Remaining blockers and follow-up
 
-**No known remaining code blockers in H04–H07.** Production is still gated on Blaze/Functions configuration, rules publication, a reviewed and reconciled migration, and signed-in staging validation. Missing historical payments and pre-cutover refund errors require real backup/accounting evidence; migration intentionally does not fabricate corrections.
+**No known remaining code blockers in H04–H07.** Production is still gated on the chosen host configuration, rules publication, backup/recovery validation, a reviewed and reconciled migration, and signed-in staging validation. The selected free Render service also has unresolved availability limitations. Missing historical payments and pre-cutover refund errors require real backup/accounting evidence; migration intentionally does not fabricate corrections.
 
 Previously identified follow-up remains: query pagination/server aggregates at larger scale, catalog bulk-import recovery, major frontend upgrades, retained unused components and provider-side abuse/App Check/monitoring configuration. See the initial full audit at `git show 7d6b534:PRODUCTION_AUDIT.md`. None of these decisions was silently changed by this four-blocker follow-up.
 

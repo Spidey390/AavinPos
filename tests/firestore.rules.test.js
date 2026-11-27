@@ -6,6 +6,8 @@ import { collection, doc, getDoc, getDocs, query, setDoc, updateDoc, where, writ
 import { createServer } from 'vite';
 import { createServer as createHTTPServer } from 'node:http';
 import { createRequire } from 'node:module';
+import { resolve } from 'node:path';
+import { createHttpApp } from '../functions/src/http-app.js';
 const requireFunctions = createRequire(new URL('../functions/package.json', import.meta.url));
 const { initializeApp: initializeAdminApp, deleteApp: deleteAdminApp } = requireFunctions('firebase-admin/app');
 const { getFirestore: getAdminFirestore } = requireFunctions('firebase-admin/firestore');
@@ -55,20 +57,9 @@ before(async () => {
   await new Promise(resolve => authLookupServer.listen(0, '127.0.0.1', resolve));
   process.env.FIREBASE_AUTH_EMULATOR_HOST = `127.0.0.1:${authLookupServer.address().port}`; // loopback Auth lookup fixture for emulator tokens
   callableModule = await import('../functions/src/index.js');
-  callableServer = createHTTPServer(async (request, response) => {
-    const chunks = [];
-    for await (const chunk of request) chunks.push(chunk);
-    try { request.body = JSON.parse(Buffer.concat(chunks).toString() || '{}'); }
-    catch { request.body = null; }
-    request.header = name => request.headers[name.toLowerCase()];
-    response.status = code => { response.statusCode = code; return response; };
-    response.send = value => { response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify(value)); return response; };
-    const handler = callableModule[request.url.slice(1)];
-    if (typeof handler !== 'function') { response.statusCode = 404; response.end(); return; }
-    await handler(request, response);
-  });
+  callableServer = createHTTPServer(createHttpApp({ handlers: callableModule, origins: ['http://localhost:3000'], distPath: resolve('public') }));
   await new Promise(resolve => callableServer.listen(0, '127.0.0.1', resolve));
-  callableOrigin = `http://127.0.0.1:${callableServer.address().port}`;
+  callableOrigin = `http://127.0.0.1:${callableServer.address().port}/api`;
 });
 beforeEach(async () => {
   await env.clearFirestore();

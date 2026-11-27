@@ -22,3 +22,6 @@ yarn-error.log*
 functions/.env*
 !functions/.env.example
 .migration-reports/
+
+server.env
+firebase-service-account*.json

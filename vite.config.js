@@ -6,12 +6,13 @@ import { securityHeaders } from './config/security.js';
 
 export default defineConfig(({ command, mode, isPreview }) => {
   const development = command === 'serve' && !isPreview && mode !== 'production';
-  resolveFirebaseConfig(loadEnv(mode, process.cwd(), 'VITE_'), development);
+  const firebase = resolveFirebaseConfig(loadEnv(mode, process.cwd(), 'VITE_'), development);
   const headers = securityHeaders(development);
   return {
   appType: 'mpa',
   plugins: [react(), {
     name: 'hosting-health-and-404',
+    generateBundle() { this.emitFile({ type: 'asset', fileName: 'build-info.json', source: JSON.stringify({ projectId: firebase.projectId, emulators: development }) }); },
     configurePreviewServer(server) {
       server.middlewares.use((request, response, next) => {
         for (const [name, value] of Object.entries(headers)) response.setHeader(name, value);

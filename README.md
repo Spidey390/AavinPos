@@ -1,10 +1,10 @@
 # Aavin POS
 
-React/Vite POS with Firebase Authentication, Firestore and callable Cloud Functions. Financial writes run only on the server. Read [PRODUCTION_AUDIT.md](PRODUCTION_AUDIT.md) before the first production cutover.
+React/Vite POS with Firebase Authentication, Firestore and a trusted Node financial backend. The selected free route uses **Render Free + Firebase Spark**, serving the browser and authenticated callable API from one web service. Read [FREE_HOSTING.md](FREE_HOSTING.md) for setup and [PRODUCTION_AUDIT.md](PRODUCTION_AUDIT.md) for security findings. The optional Cloud Functions target is retained.
 
 ## Setup and verification
 
-Use Node 24+ for root tooling and Java 21+ for the Firestore emulator. Functions deploy on Node 22.
+Use Node 24+ for root tooling and Java 21+ for the Firestore emulator. The standalone Render host uses Node 24; the optional Functions target uses Node 22.
 
 ```sh
 npm ci
@@ -37,16 +37,18 @@ VITE_USE_FIREBASE_EMULATORS=true npm run dev
 
 Emulator ports default to Auth 9099, Firestore 8080 and Functions 5001 on loopback. Matching optional `VITE_FIREBASE_*_EMULATOR_PORT` overrides support isolated local instances. The dedicated test runner chooses its own Firestore port. Production builds reject emulator mode.
 
-## Deployment and migration
+## Free hosting and migration
 
-Functions require Blaze. The first rollout needs a maintenance window, backups, deny-direct-write rules, Functions, a reviewed dry-run/apply migration and then Hosting. Use the exact ordered commands in [the audit](PRODUCTION_AUDIT.md#manual-cutover-steps). Migration defaults to dry-run and applying requires `--plan`, `--ack-backup` and matching `--confirm-project`. No migration was run against production by this task.
+Follow [FREE_HOSTING.md](FREE_HOSTING.md). The `render.yaml` Blueprint selects the Free plan, Node 24, Singapore, `/health`, and manual future deployments. Both browser and API use the Render origin; there is no need to change Firebase to Blaze or deploy Cloud Functions. A dedicated administrator-approved service-account Secret File is required. Its key never belongs in browser variables or the repository.
 
-Set `functions/.env.PROJECT_ID` from `functions/.env.example`: approved HTTPS `POS_ALLOWED_ORIGINS`, and `ENABLE_RECONCILED_REFUNDS=false`. Keep the public UI flag `VITE_ENABLE_RECONCILED_REFUNDS=false` in the browser build until the separately reviewed refund rollout. Required public web build variables are `VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_PROJECT_ID`, `VITE_FIREBASE_APP_ID`. Other registration values are optional; all VITE values are browser-visible. Private Admin/payment/AI credentials never belong in VITE variables.
+Run `npm start` after a production build to preview the standalone host locally. Copy `server.env.example` to ignored `server.env` and set the intended project. Local preview binds loopback and can use the already authenticated administrator ADC credentials. Hosted startup requires the Render secret file and rejects wrong projects, emulator settings and mismatched builds.
 
-For later releases after cutover, `npm run deploy -- --project PROJECT_ID` deploys the financial Functions codebase, Hosting and rules. It does not apply migrations or enable refunds. Production deployment was not performed here.
+`npm run deploy` and `deploy:all` stop with free-hosting guidance; `npm run deploy:rules -- --project PROJECT_ID` publishes rules only. Rules publication and the reviewed payment migration remain maintenance-window operations. No deployment, credential upload or production migration was performed by this change.
 
-Create the first owner Auth user and `operators/{uid}` through a trusted Firebase administrator. Client code cannot provision owners. Restrict API keys/domains, review Auth policy and owner grants, configure managed backups, billing/error alerts and HTTPS, and run signed-in staging tests before opening terminals.
+A read-only, type-preserving local backup/verification CLI is available at `functions/scripts/backup-firestore.js` for Spark. Follow its maintenance, privacy and restoration-review instructions in the hosting guide. It is not a managed Firestore export and excludes Auth/rules/indexes/IAM. The existing embedded history may already be incomplete; reconcile older records before accepting statements.
 
-The old embedded ledger already discarded entries beyond fifty. Migration preserves all available evidence and the current balance, marks history incomplete, and cannot recover absent records. Reconcile older backups and legacy refunds before treating historical statements as complete.
+Render explicitly advises against production use of its free instances: they sleep after inactivity and have suspension/usage limits. This route is prepared for free preview/staging; uninterrupted production billing still needs a suitable availability/recovery arrangement. Keep refunds disabled in both browser and backend.
 
-The app uses hash navigation, a real path 404 and security headers. `/health` checks static Hosting availability only. Tables/channel legacy components are retained but not re-enabled. Physical printer and bank-transfer behavior requires operator validation.
+Create the first owner Auth user and `operators/{uid}` through a trusted Firebase administrator. Restrict API keys/domains, review owner grants, backups and monitoring, and test signed-in flows on staging. Physical printer and bank-transfer behavior requires operator validation.
+
+The original Firebase deployment configuration remains for an optional future Blaze rollout. It is not the selected free route. The app uses hash navigation, a real 404 page and HTTP security headers.

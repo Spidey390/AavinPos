@@ -1,0 +1,35 @@
+# Free preview. Blueprint creation starts an initial deployment; later deploys are manual.
+services:
+  - type: web
+    name: aavin-pos
+    runtime: node
+    plan: free
+    region: singapore
+    branch: prod-hardening
+    autoDeployTrigger: off
+    buildCommand: npm ci --include=dev --ignore-scripts && npm ci --prefix functions --ignore-scripts && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "24.22.3"
+      - key: NODE_ENV
+        value: production
+      - key: POS_PROJECT_ID
+        value: aavin-81398
+      - key: GOOGLE_APPLICATION_CREDENTIALS
+        value: /etc/secrets/firebase-service-account.json
+      - key: ENABLE_RECONCILED_REFUNDS
+        value: "false"
+      - key: VITE_USE_FIREBASE_EMULATORS
+        value: "false"
+      - key: VITE_ENABLE_RECONCILED_REFUNDS
+        value: "false"
+      - key: VITE_FIREBASE_PROJECT_ID
+        value: aavin-81398
+      - key: VITE_FIREBASE_AUTH_DOMAIN
+        value: aavin-81398.firebaseapp.com
+      - key: VITE_FIREBASE_API_KEY
+        sync: false
+      - key: VITE_FIREBASE_APP_ID
+        sync: false

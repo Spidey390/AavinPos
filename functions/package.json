@@ -3,10 +3,16 @@
   "private": true,
   "type": "module",
   "main": "src/index.js",
-  "engines": { "node": "22" },
+  "engines": {
+    "node": "22"
+  },
   "scripts": {
-    "build": "node --check src/index.js && node --check src/financial.js && node --check src/defaults.js && node --check src/migration.js && node --check scripts/migrate-payments.js",
+    "build": "node --check src/index.js && node --check src/callables.js && node --check src/http-app.js && node --check src/server-config.js && node --check src/server.js && node --check src/financial.js && node --check src/defaults.js && node --check src/migration.js && node --check scripts/migrate-payments.js && node --check src/backup.js && node --check scripts/backup-firestore.js",
     "test": "node --test test/*.test.js"
   },
-  "dependencies": { "firebase-admin": "14.5.1", "firebase-functions": "7.4.0" }
+  "dependencies": {
+    "firebase-admin": "14.5.1",
+    "firebase-functions": "7.4.0",
+    "express": "5.3.0"
+  }
 }
