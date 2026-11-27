@@ -1,5 +1,6 @@
 import React from 'react';
 import StaffAttendanceView from './StaffAttendanceView';
+import DayCalendarPicker from '../reports/DayCalendarPicker';
 
 const money = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 });
 const loginFormat = new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true });
@@ -19,18 +20,19 @@ export default function StaffActivityView({ report, loading, error, start, end, 
         <p className="mt-1 text-sm text-slate-300">View staff login and logout times, daily working hours, sales and expenses.</p>
       </div>
       <form onSubmit={onApply} className="flex flex-wrap items-end gap-3">
-        <label className="w-full min-w-0 text-sm sm:w-auto sm:max-w-48 sm:flex-1">{rangeMode ? 'From' : 'Selected day'}
+        {!rangeMode && <DayCalendarPicker value={start} onChange={onStartChange} />}
+        {rangeMode && <label className="w-full min-w-0 text-sm sm:w-auto sm:max-w-48 sm:flex-1">From
           <input type="date" required value={start} onChange={event => onStartChange(event.target.value)}
             className="mt-1 min-h-11 w-full min-w-0 rounded-lg border border-slate-600 bg-[#121620] px-3 py-2 text-white [color-scheme:dark]" />
-        </label>
+        </label>}
         {rangeMode && <label className="w-full min-w-0 text-sm sm:w-auto sm:max-w-48 sm:flex-1">To
           <input type="date" required value={end} onChange={event => onEndChange(event.target.value)}
             className="mt-1 min-h-11 w-full min-w-0 rounded-lg border border-slate-600 bg-[#121620] px-3 py-2 text-white [color-scheme:dark]" />
         </label>}
         <button type="submit" disabled={loading} className="min-h-11 rounded-lg bg-orange-700 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-600 disabled:opacity-60">
-          {loading ? 'Loading…' : 'Apply / Refresh'}
+          {loading ? 'Loading…' : rangeMode ? 'Apply / Refresh' : 'Refresh'}
         </button>
-        <button type="button" onClick={onToday} disabled={loading} className="min-h-11 rounded-lg border border-slate-600 px-4 py-2 text-sm font-semibold text-slate-100 hover:bg-slate-800 disabled:opacity-60">Today</button>
+        {rangeMode && <button type="button" onClick={onToday} disabled={loading} className="min-h-11 rounded-lg border border-slate-600 px-4 py-2 text-sm font-semibold text-slate-100 hover:bg-slate-800 disabled:opacity-60">Today</button>}
         <button type="button" onClick={onRangeChange} aria-pressed={Boolean(rangeMode)} disabled={loading} className="min-h-11 rounded-lg px-3 py-2 text-sm text-slate-300 underline underline-offset-4 hover:text-white disabled:opacity-60">{rangeMode ? 'Single day' : 'Date range'}</button>
       </form>
       {loading && <p role="status" className="py-4 text-sm text-slate-300">Loading staff activity…</p>}

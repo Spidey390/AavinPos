@@ -30,8 +30,22 @@ export default function StaffActivity() {
   }, [isOwner, workspaceId, key, period.start, period.end]);
   if (!isOwner) return null;
   return <StaffActivityView start={start} end={end} rangeMode={rangeMode}
-    onStartChange={value => { setStart(value); if (!rangeMode) setEnd(value); }} onEndChange={setEnd}
-    onRangeChange={() => { if (rangeMode) setEnd(start); setRangeMode(previous => !previous); }}
+    onStartChange={value => {
+      setStart(value);
+      if (!rangeMode) {
+        setEnd(value);
+        setPeriod(previous => ({ start: value, end: value, attempt: previous.attempt + 1 }));
+      }
+    }} onEndChange={setEnd}
+    onRangeChange={() => {
+      if (rangeMode) {
+        const day = start || businessDate();
+        setStart(day);
+        setEnd(day);
+        setPeriod(previous => ({ start: day, end: day, attempt: previous.attempt + 1 }));
+      }
+      setRangeMode(previous => !previous);
+    }}
     loading={!state || state.key !== key} error={state?.key === key ? state.error : null} report={state?.key === key ? state.report : null}
     onApply={event => { event.preventDefault(); setPeriod(previous => ({ start, end, attempt: previous.attempt + 1 })); }}
     onToday={() => { const today = businessDate(); setStart(today); setEnd(today); setRangeMode(false); setPeriod(previous => ({ start: today, end: today, attempt: previous.attempt + 1 })); }} />;
