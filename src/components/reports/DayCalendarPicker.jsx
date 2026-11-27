@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Calendar, ChevronLeft, ChevronRight, CalendarDays, X } from 'lucide-react';
+import { Calendar, ChevronLeft, ChevronRight } from 'lucide-react';
 import { shiftDate, businessDate } from '../../domain/dates';
 
 const WEEKDAYS = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
@@ -11,7 +11,6 @@ const MONTH_NAMES = [
 export default function DayCalendarPicker({ value, onChange, label = 'Select Date' }) {
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef(null);
-  const nativeInputRef = useRef(null);
 
   const todayStr = businessDate();
   const selectedDateStr = value || todayStr;
@@ -156,22 +155,6 @@ export default function DayCalendarPicker({ value, onChange, label = 'Select Dat
           Jump to Today
         </button>
       )}
-
-      {/* Native Picker Button as second quick option */}
-      <div className="relative inline-block">
-        <input
-          ref={nativeInputRef}
-          type="date"
-          value={selectedDateStr}
-          onChange={e => e.target.value && onChange(e.target.value)}
-          onClick={(e) => {
-            try { e.target.showPicker?.(); } catch {}
-          }}
-          style={{ colorScheme: 'dark' }}
-          className="min-h-11 cursor-pointer rounded-xl border border-[#2b3548] bg-[#141923] px-3 text-xs font-semibold text-slate-200 focus:border-orange-500 focus:outline-none"
-          title="Click to open browser calendar"
-        />
-      </div>
 
       {/* Dropdown Calendar Popup */}
       {isOpen && (
