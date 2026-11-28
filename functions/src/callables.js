@@ -9,7 +9,7 @@ export function createCallableHandlers(db, { allowRefunds = false, cors = [] } =
     try {
       if (!request.auth?.uid) throw new HttpsError('unauthenticated', 'Sign in to continue.');
       if (Buffer.byteLength(JSON.stringify(request.data ?? null)) > 512000) throw new HttpsError('invalid-argument', 'Request is too large.');
-      if (request.auth && !['recordStaffLogin', 'recordStaffLogout', 'getStaffSummary'].includes(name)) await service.recordStaffLogin({ auth: request.auth, data: {} });
+      if (request.auth && !['recordStaffLogin', 'recordStaffLogout', 'getStaffSummary'].includes(name) && !(name === 'checkout' && request.data?.offlineReceipt)) await service.recordStaffLogin({ auth: request.auth, data: {} });
       return await service[name](request);
     } catch (error) {
       if (error instanceof HttpsError) throw error;

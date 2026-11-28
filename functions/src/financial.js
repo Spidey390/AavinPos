@@ -54,7 +54,13 @@ export function createFinancialService(db, { allowRefunds = false } = {}) {
   }
   async function checkout(request) {
     const data = request.data;
-    object(data, ['workspace', 'idempotencyKey', 'items', 'customerId', 'tableId', 'tableRevision', 'channel', 'discountPercent', 'paymentMethod', 'amountReceived', 'splitBreakdown', 'referenceNo', 'expectedTotal']);
+    object(data, ['workspace', 'idempotencyKey', 'items', 'customerId', 'tableId', 'tableRevision', 'channel', 'discountPercent', 'paymentMethod', 'amountReceived', 'splitBreakdown', 'referenceNo', 'expectedTotal', 'offlineReceipt']);
+    if (data.offlineReceipt != null) {
+      object(data.offlineReceipt, ['reference', 'capturedAt']);
+      const localReference = text(data.offlineReceipt.reference, 180);
+      const captured = data.offlineReceipt.capturedAt;
+      if (!/^LOCAL-[A-Za-z0-9_-]+$/.test(localReference) || typeof captured !== 'string' || !Number.isFinite(Date.parse(captured)) || new Date(captured).toISOString() !== captured || Date.parse(captured) > Date.now() + 300000 || data.customerId != null || data.tableId != null || data.paymentMethod !== 'Cash' || !['Counter', 'Takeaway'].includes(data.channel) || (data.discountPercent ?? 0) !== 0) fail('invalid-argument', 'Invalid provisional cash receipt.');
+    }
     if (!id(data.idempotencyKey) || (data.customerId != null && !id(data.customerId)) || (data.tableId != null && !id(data.tableId))) fail('invalid-argument', 'Invalid operation identifiers.');
     const requested = lines(data.items);
     const percent = data.discountPercent ?? 0;
@@ -133,6 +139,9 @@ export function createFinancialService(db, { allowRefunds = false } = {}) {
         items, itemsCount: items.reduce((sum, item) => sum + item.quantity, 0), itemsSummary: items.map(item => `${item.quantity}x ${item.name}`).join(', '),
         subtotal: subtotal / 100, discount: discount / 100, total: total / 100, discountPercent: percent, fixedDiscount: 0, merchant,
         paymentMethod: data.paymentMethod, amountReceived: received / 100, splitBreakdown, referenceNo, status: 'Completed', cashierUid: operator.uid, cashierName: operator.name || operator.email };
+      // Device time is informational and never controls accounting dates, prices,
+      // permissions, credit limits or verified attendance.
+      if (data.offlineReceipt) Object.assign(saved, { localReceiptNo: data.offlineReceipt.reference, deviceRecordedAt: data.offlineReceipt.capturedAt, deviceTimeVerified: false, source: 'desktop-queue' });
       applyRate();
       tx.create(orderRef, saved);
       const proofRef = row(data.workspace, 'financialInvoices', saved.id);

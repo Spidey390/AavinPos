@@ -234,6 +234,23 @@ function checkoutData(overrides = {}) {
 }
 const invoke = (name, data, uid = 'staff-a') => service[name]({ auth: uid ? { uid } : null, data });
 
+test('desktop provisional cash sync rechecks catalog, permissions and idempotency; device dates remain unverified', async () => {
+  const offlineReceipt = { reference: 'LOCAL-device-sale', capturedAt: '2026-01-01T03:30:00.000Z' };
+  const data = checkoutData({ expectedTotal: 25, offlineReceipt });
+  const saved = await invoke('checkout', data);
+  assert.equal(saved.localReceiptNo, offlineReceipt.reference);
+  assert.equal(saved.deviceTimeVerified, false);
+  assert.equal(saved.deviceRecordedAt, offlineReceipt.capturedAt);
+  assert.notEqual(saved.createdAt, offlineReceipt.capturedAt);
+  assert.deepEqual(await invoke('checkout', data), saved);
+  await assert.rejects(invoke('checkout', { ...data, idempotencyKey: 'forged-desktop', expectedTotal: 1 }), { code: 'failed-precondition' });
+  await assert.rejects(invoke('checkout', { ...data, idempotencyKey: 'credit-desktop', paymentMethod: 'Account', customerId: 'c1' }), { code: 'invalid-argument' });
+  await assert.rejects(invoke('checkout', { ...data, idempotencyKey: 'revoked-desktop' }, 'disabled'), { code: 'permission-denied' });
+  const response = await fetch(`${callableOrigin}/checkout`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${emulatorToken('staff-b')}` }, body: JSON.stringify({ data: { ...data, idempotencyKey: 'desktop-no-false-attendance' } }) });
+  assert.equal(response.status, 200);
+  assert.equal((await getAdminFirestore(adminApp).doc('operatorActivity/staff-b').get()).exists, false);
+});
+
 test('regression: forged invoice lines and direct writes are rejected', async () => {
   const forged = order({ items: [{ id: 'p1', name: 'Milk', price: 1000, quantity: 100, total: 100000 }] });
   for (const uid of ['staff-a', 'owner']) await assertFails(saleBatch(dbFor(uid), forged).commit());

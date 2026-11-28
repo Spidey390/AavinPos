@@ -11,7 +11,7 @@
     "deploy": "node scripts/deploy-guidance.js",
     "deploy:all": "node scripts/deploy-guidance.js",
     "lint": "eslint . --max-warnings=0",
-    "test:unit": "node --test tests/domain.test.js tests/deployment.test.js tests/local-api.test.js",
+    "test:unit": "node --test tests/domain.test.js tests/deployment.test.js tests/local-api.test.js tests/desktop.test.js",
     "test:rules": "node scripts/test-rules.js",
     "check:secrets": "node scripts/check-secrets.js",
     "verify": "npm run lint && npm test && npm run build && npm audit && npm --prefix functions audit && npm run check:secrets",
@@ -19,7 +19,13 @@
     "test:functions": "npm --prefix functions test",
     "start": "node --env-file-if-exists=server.env functions/src/server.js",
     "deploy:rules": "firebase deploy --only firestore:rules",
-    "deploy:firestore": "firebase deploy --only firestore:rules,firestore:indexes"
+    "deploy:firestore": "firebase deploy --only firestore:rules,firestore:indexes",
+    "test:desktop": "node --test tests/desktop.test.js",
+    "build:desktop": "npm run build && node scripts/build-desktop.js",
+    "desktop": "npm run build:desktop && electron .desktop-package",
+    "package:win": "npm run build:desktop && electron-builder --config electron-builder.config.cjs --win --x64 --publish never && npm run check:desktop-package",
+    "package:mac": "npm run build:desktop && electron-builder --config electron-builder.config.cjs --mac --arm64 --publish never",
+    "check:desktop-package": "node scripts/check-desktop-package.js"
   },
   "dependencies": {
     "canvas-confetti": "^1.9.4",
@@ -36,6 +42,8 @@
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
+    "electron": "45.5.0",
+    "electron-builder": "26.18.0",
     "eslint": "10.15.0",
     "globals": "17.14.0",
     "postcss": "^8.4.49",
@@ -43,7 +51,8 @@
     "vite": "^6.0.7"
   },
   "overrides": {
-    "@grpc/grpc-js": "^1.14.7"
+    "@grpc/grpc-js": "^1.14.7",
+    "minimatch@>=7.0.0 <11.0.1": "^11.0.9"
   },
   "engines": {
     "node": ">=24"

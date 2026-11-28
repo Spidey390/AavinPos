@@ -37,7 +37,7 @@ export default defineConfig(({ command, mode, isPreview }) => {
     open: false,
     cors: false,
     fs: {
-      deny: ['.env', '.env.*', '*.{crt,pem}', '**/.git/**', '**/server.env', '**/.migration-reports/**', '**/firebase-service-account*.json']
+      deny: ['.env', '.env.*', '*.{crt,pem}', '**/.git/**', '**/server.env', '**/.migration-reports/**', '**/firebase-service-account*.json', '**/.desktop-package/**', '**/releases/**', '**/*.sqlite*']
     },
     headers
   },

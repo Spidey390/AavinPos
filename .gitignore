@@ -25,3 +25,10 @@ functions/.env*
 
 server.env
 firebase-service-account*.json
+
+# Desktop build outputs and local data (never commit operator tokens or bills).
+.desktop-package/
+releases/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal

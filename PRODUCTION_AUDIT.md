@@ -4,6 +4,24 @@ All four approved code blockers are resolved on `prod-hardening`. No Functions d
 
 **Production verdict: NOT SAFE TO DEPLOY directly without the manual cutover.** There are no known remaining code blockers within H04–H07. A local emulator cannot certify historical production balances, missing legacy payments, deployed IAM/rules or domain configuration.
 
+## Windows offline conversion — 28 November 2026
+
+Work is isolated on `codex/windows-offline`; the unchanged web source/build is backed up at tag `backup/pre-windows-offline-20261128-162957` (commit `901574f`). The private archive includes a verified Git bundle, source/build archives, hashes and local environment copies, not a live database export. See [WINDOWS_DESKTOP.md](WINDOWS_DESKTOP.md) for the exact backup path, build/setup, security limits and Windows acceptance steps.
+
+| Area | Before | After / remaining condition |
+| --- | --- | --- |
+| Windows application | Browser only | Sandboxed Electron x64 installer, isolated online POS window; Windows runtime/printer acceptance still required |
+| Offline cash | Backend required for every bill | Encrypted SQLite WAL/FULL outbox, provisional receipts, offline passphrase and 24-hour prior-online staff grant |
+| Sync/retries | No durable offline queue | Automatic bounded polling/retry, immutable operation IDs, server-priced idempotent checkout; permanent conflicts retained for owner review |
+| Financial trust | Existing server/rules enforcement | Preserved; no Admin credentials in installer, no direct invoice/payment/ledger writes, credit/refunds remain online/gated |
+| Device dates/attendance | Server-confirmed online contact | Device capture time retained unverified; server acceptance controls reports; offline hours excluded from verified attendance |
+| Recovery | Web checkpoint only | Private web backup plus owner local SQLite backup; Windows profile/DPAPI recovery and restore drill required |
+| Deployment | Free backend prepared, not deployed | Still manual; backend update, HTTPS/identity/monitoring and target-device acceptance block live desktop rollout |
+
+**Desktop verdict: staging candidate; NOT SAFE for live rollout until the documented host, recovery and Windows/printer checks pass.** Offline cash does not make the entire POS work offline. Permanent cash conflicts, transferable device recovery, offline attendance reconciliation and offline final invoice numbering remain outside this first desktop version. No cloud deployment or production data change is included in the conversion.
+
+Local verification: 104 tests (43 root/domain/desktop/host checks, 18 server units, 43 Firestore emulator/rules/callable tests), lint, web/desktop production builds and both dependency audits pass. The credential scan reports no private credentials in the working tree, generated desktop source/assets or available Git history. Desktop regressions cover encrypted restart recovery, lost success responses, cash conflicts, revoked access, lease/clock/PIN controls, renderer price/credit forgery, main-frame/asset boundaries and concurrent receipt acknowledgement. The installer package check verifies the exact allowlist/source, project registration, hardened fuses and checksum. The desktop startup screen was inspected on macOS; Windows execution and physical printers were not tested.
+
 ## Selected free hosting update
 
 The user selected **a separate free hosted backend**, keeping Firebase Spark. `functions/src/server.js` now serves the built UI plus the same SDK-authenticated `/api/*` handlers on a Node web service. `render.yaml` selects Render Free with automatic future deployments off. The financial transaction service, all four blocker fixes and Firestore client-write denials are preserved. No credential upload or new IAM grant was made. See [FREE_HOSTING.md](FREE_HOSTING.md) for the selected cutover; the Blaze instructions later in this report are now an optional alternative.

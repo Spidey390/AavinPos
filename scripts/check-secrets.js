@@ -13,7 +13,9 @@ const patterns = [
   ['GitHub token', /gh[pousr]_[A-Za-z0-9]{24,}/g],
   ['Slack token', /xox[baprs]-[A-Za-z0-9-]{24,}/g],
   ['JWT', /eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{16,}/g],
-  ['literal private credential', /(?<![\w$])(?:password|jwt[_-]?secret|client[_-]?secret|private[_-]?key|api[_-]?secret)['"]?\s*[:=]\s*['"][A-Za-z0-9_+/-]{12,}['"]/gi]
+  // Hyphenated autocomplete values such as "new-password":"current-password"
+  // are not assignments to a credential named "password".
+  ['literal private credential', /(?<![\w$-])(?:password|jwt[_-]?secret|client[_-]?secret|private[_-]?key|api[_-]?secret)['"]?\s*[:=]\s*['"][A-Za-z0-9_+/-]{12,}['"]/gi]
 ];
 const findings = new Set();
 function scan(label, bytes) {
@@ -27,7 +29,9 @@ function scan(label, bytes) {
 let files = 0;
 async function walk(directory) {
   for (const entry of await readdir(directory, { withFileTypes: true })) {
-    if (['.git', 'node_modules', '.firebase', '.DS_Store'].includes(entry.name)) continue;
+    // Installer binaries are checked separately via their app.asar allowlist.
+    // Still scan generated renderer/config/source in .desktop-package.
+    if (['.git', 'node_modules', '.firebase', '.DS_Store', 'releases'].includes(entry.name)) continue;
     const path = join(directory, entry.name);
     if (entry.isDirectory()) await walk(path);
     else if (entry.isFile()) { files++; scan(relative(process.cwd(), path), await readFile(path)); }
