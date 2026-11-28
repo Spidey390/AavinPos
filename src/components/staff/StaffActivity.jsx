@@ -10,6 +10,7 @@ export default function StaffActivity() {
   const [start, setStart] = useState(businessDate);
   const [end, setEnd] = useState(businessDate);
   const [rangeMode, setRangeMode] = useState(false);
+  const [expandedStaffId, setExpandedStaffId] = useState(null);
   const [period, setPeriod] = useState(() => ({ start: businessDate(), end: businessDate(), attempt: 0 }));
   const [state, setState] = useState(null);
   const key = JSON.stringify([workspaceId, period]);
@@ -29,7 +30,8 @@ export default function StaffActivity() {
     return () => { active = false; };
   }, [isOwner, workspaceId, key, period.start, period.end]);
   if (!isOwner) return null;
-  return <StaffActivityView start={start} end={end} rangeMode={rangeMode}
+  return <StaffActivityView start={start} end={end} rangeMode={rangeMode} expandedStaffId={expandedStaffId}
+    onStaffToggle={uid => setExpandedStaffId(current => current === uid ? null : uid)}
     onStartChange={value => {
       setStart(value);
       if (!rangeMode) {

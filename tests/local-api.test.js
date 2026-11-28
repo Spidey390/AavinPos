@@ -107,7 +107,7 @@ test('staff setup view keeps recorded totals visible and never formats unknown c
   try {
     const { default: View } = await server.ssrLoadModule('/src/components/staff/StaffActivityView.jsx');
     const report = { period: { start: '2026-11-27', end: '2026-11-27' }, generatedAt: '2026-11-27T09:00:00Z', cashState: 'migration-required', staff: [{ uid: 'test', name: 'Fixture staff', bills: 1, totalSales: 100, totalExpenses: 15, cashReceived: null, cashRefunds: null, cashExpenses: null, remaining: null }] };
-    const html = renderToStaticMarkup(View({ report, start: '2026-11-27', end: '2026-11-27' }));
+    const html = renderToStaticMarkup(View({ report, expandedStaffId: 'test', start: '2026-11-27', end: '2026-11-27' }));
     assert.match(html, /₹100\.00/); assert.match(html, /₹15\.00/); assert.match(html, /Setup required/);
     assert.doesNotMatch(html, /₹0\.00/);
   } finally { await server.close(); }
